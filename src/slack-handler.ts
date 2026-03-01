@@ -279,13 +279,21 @@ export class SlackHandler {
               await this.handleTodoUpdate(todoTool.input, sessionKey, session?.sessionId, channel, thread_ts || ts, say);
             }
 
-            // For other tool use messages, format them immediately as new messages
-            const toolContent = this.formatToolUse(message.message.content);
-            if (toolContent) { // Only send if there's content (TodoWrite returns empty string)
-              await say({
-                text: toolContent,
-                thread_ts: thread_ts || ts,
-              });
+            // Only broadcast write/edit tool uses to Slack — read-only tools (Read, Grep, Glob, Agent, ToolSearch, etc.) are noise
+            const writeTools = message.message.content?.filter((part: any) =>
+              part.type === 'tool_use' && ['Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(part.name)
+            );
+            if (writeTools && writeTools.length > 0) {
+              const toolContent = this.formatToolUse([
+                ...message.message.content.filter((part: any) => part.type === 'text'),
+                ...writeTools,
+              ]);
+              if (toolContent) {
+                await say({
+                  text: toolContent,
+                  thread_ts: thread_ts || ts,
+                });
+              }
             }
           } else {
             // Handle regular text content
@@ -322,13 +330,16 @@ export class SlackHandler {
         }
       }
 
-      // Update status to completed
+      // Delete the status message now that the real response has been sent
       if (statusMessageTs) {
-        await this.app.client.chat.update({
-          channel,
-          ts: statusMessageTs,
-          text: '✅ *Task completed*',
-        });
+        try {
+          await this.app.client.chat.delete({
+            channel,
+            ts: statusMessageTs,
+          });
+        } catch (deleteError) {
+          this.logger.debug('Could not delete status message', deleteError);
+        }
       }
 
       // Update reaction to show completion
@@ -713,9 +724,18 @@ export class SlackHandler {
   }
 
   setupEventHandlers() {
-    // Handle direct messages
+    // Handle direct messages and channel messages (but NOT @mentions, which are handled by app_mention)
     this.app.message(async ({ message, say }) => {
       if (message.subtype === undefined && 'user' in message) {
+        // Skip messages that contain a bot mention — those are handled by app_mention
+        const botUserId = await this.getBotUserId();
+        if (botUserId && 'text' in message && (message.text as string)?.includes(`<@${botUserId}>`)) {
+          this.logger.debug('Skipping message with bot mention (handled by app_mention)', {
+            user: message.user,
+            channel: message.channel,
+          });
+          return;
+        }
         this.logger.info('Handling direct message event');
         await this.handleMessage(message as MessageEvent, say);
       }
