@@ -46,6 +46,11 @@ export class ClaudeHandler {
       extraArgs: {
         '--plugin-dir': '/Users/dustincheng/projects/claudeclaw/.claude/plugins/remember',
       },
+      // Prompt-based hooks (SessionEnd, PreCompact) don't fire outside REPL mode.
+      // As a workaround, append a system prompt nudge so Claude invokes the remember
+      // skill before finishing. See docs/plans/remember-hook-alternatives.md for
+      // future options (SDK programmatic hooks, post-query transcript analysis).
+      appendSystemPrompt: 'Before finishing your response, use the remember:remember skill to scan this conversation for any preferences, project context, or relationship continuity worth saving to long-term memory. If nothing is worth saving, skip silently.',
     };
 
     if (workingDirectory) {
