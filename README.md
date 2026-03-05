@@ -2,6 +2,13 @@
 
 A Slack bot that integrates with Claude Code SDK to provide AI-powered coding assistance directly in your Slack workspace.
 
+## 🆕 What's New
+
+- **Thread session continuity** — Each Slack thread maps to a persistent Claude session (UUID v5), enabling `--resume` across bot restarts with per-thread mutex for concurrent messages
+- **Emoji shortcode fix** — Slack reactions now use valid shortcode names instead of Unicode characters
+- **Memory integration** — `appendSystemPrompt` nudges Claude to invoke the remember skill before finishing (workaround for hooks not firing outside REPL)
+- **ClaudeClaw deployment** — `bypassPermissions` mode, default working directory support, filtered Slack tool broadcasts (write ops only), clean status message handling
+
 ## Features
 
 - 🤖 Direct message support - chat with the bot privately
@@ -257,12 +264,18 @@ This will show detailed logs including:
 ### Project Structure
 ```
 src/
-├── index.ts          # Application entry point
-├── config.ts         # Configuration management
+├── index.ts                      # Application entry point
+├── config.ts                     # Configuration management
 ├── types.ts                      # TypeScript type definitions
 ├── claude-handler.ts             # Claude Code SDK integration
 ├── slack-handler.ts              # Slack event handling
 ├── working-directory-manager.ts  # Working directory management
+├── session-id.ts                 # Deterministic UUID v5 thread→session mapping
+├── thread-lock.ts                # Per-thread mutex for concurrent messages
+├── file-handler.ts               # File upload processing
+├── image-handler.ts              # Image attachment handling
+├── mcp-manager.ts                # MCP server lifecycle management
+├── todo-manager.ts               # Todo/task management
 └── logger.ts                     # Logging utility
 ```
 
