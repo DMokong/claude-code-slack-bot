@@ -8,6 +8,43 @@ import { TodoManager, Todo } from './todo-manager';
 import { McpManager } from './mcp-manager';
 import { permissionServer } from './permission-mcp-server';
 import { config } from './config';
+import { withThreadLock } from './thread-lock';
+
+/**
+ * Maps Unicode emoji characters to Slack reaction shortcode names.
+ * The Slack reactions API requires shortcode names (e.g. "thinking_face"),
+ * not Unicode emoji characters (e.g. "🤔").
+ */
+const EMOJI_TO_SHORTCODE: Record<string, string> = {
+  '🤔': 'thinking_face',
+  '⚙️': 'gear',
+  '⚙': 'gear',           // without variation selector (U+FE0F)
+  '✅': 'white_check_mark',
+  '❌': 'x',
+  '⏹️': 'stop_button',
+  '⏹': 'stop_button',    // without variation selector (U+FE0F)
+  '🔄': 'arrows_counterclockwise',
+  '📋': 'clipboard',
+};
+
+/**
+ * Converts a Unicode emoji character to its Slack shortcode name.
+ * If the input is already a valid shortcode, it passes through unchanged.
+ * Returns empty string for empty/falsy input or unknown Unicode emoji.
+ */
+export function emojiToShortcode(emoji: string): string {
+  if (!emoji) return '';
+
+  // Check the mapping first
+  const shortcode = EMOJI_TO_SHORTCODE[emoji];
+  if (shortcode) return shortcode;
+
+  // If it's already a valid ASCII shortcode, pass through
+  if (/^[a-z0-9_+-]+$/.test(emoji)) return emoji;
+
+  // Unknown Unicode emoji — caller handles warning
+  return '';
+}
 
 interface MessageEvent {
   user: string;
@@ -187,10 +224,14 @@ export class SlackHandler {
       return;
     }
 
-    const sessionKey = this.claudeHandler.getSessionKey(user, channel, thread_ts || ts);
-    
+    const threadKey = thread_ts || ts;
+
+    // Serialize messages within the same thread to prevent concurrent session writes
+    await withThreadLock(threadKey, async () => {
+    const sessionKey = this.claudeHandler.getSessionKey(user, channel, threadKey);
+
     // Store the original message info for status reactions
-    const originalMessageTs = thread_ts || ts;
+    const originalMessageTs = threadKey;
     this.originalMessages.set(sessionKey, { channel, ts: originalMessageTs });
     
     // Cancel any existing request for this conversation
@@ -396,7 +437,7 @@ export class SlackHandler {
       }
     } finally {
       this.activeControllers.delete(sessionKey);
-      
+
       // Clean up todo tracking if session ended
       if (session?.sessionId) {
         // Don't immediately clean up - keep todos visible for a while
@@ -408,6 +449,7 @@ export class SlackHandler {
         }, 5 * 60 * 1000); // 5 minutes
       }
     }
+    }); // end withThreadLock
   }
 
   private extractTextContent(message: SDKMessage): string | null {
@@ -580,6 +622,12 @@ export class SlackHandler {
   }
 
   private async updateMessageReaction(sessionKey: string, emoji: string): Promise<void> {
+    const shortcode = emojiToShortcode(emoji);
+    if (!shortcode) {
+      this.logger.warn('Cannot update reaction: unknown or unmapped emoji', { sessionKey, emoji });
+      return;
+    }
+
     const originalMessage = this.originalMessages.get(sessionKey);
     if (!originalMessage) {
       return;
@@ -587,8 +635,8 @@ export class SlackHandler {
 
     // Check if we're already showing this emoji
     const currentEmoji = this.currentReactions.get(sessionKey);
-    if (currentEmoji === emoji) {
-      this.logger.debug('Reaction already set, skipping', { sessionKey, emoji });
+    if (currentEmoji === shortcode) {
+      this.logger.debug('Reaction already set, skipping', { sessionKey, emoji: shortcode });
       return;
     }
 
@@ -603,10 +651,10 @@ export class SlackHandler {
           });
           this.logger.debug('Removed previous reaction', { sessionKey, emoji: currentEmoji });
         } catch (error) {
-          this.logger.debug('Failed to remove previous reaction (might not exist)', { 
-            sessionKey, 
+          this.logger.debug('Failed to remove previous reaction (might not exist)', {
+            sessionKey,
             emoji: currentEmoji,
-            error: (error as any).message 
+            error: (error as any).message
           });
         }
       }
@@ -615,18 +663,18 @@ export class SlackHandler {
       await this.app.client.reactions.add({
         channel: originalMessage.channel,
         timestamp: originalMessage.ts,
-        name: emoji,
+        name: shortcode,
       });
 
-      // Track the current reaction
-      this.currentReactions.set(sessionKey, emoji);
+      // Track the current reaction (store shortcode for consistent deduplication)
+      this.currentReactions.set(sessionKey, shortcode);
 
-      this.logger.debug('Updated message reaction', { 
-        sessionKey, 
-        emoji, 
+      this.logger.debug('Updated message reaction', {
+        sessionKey,
+        emoji: shortcode,
         previousEmoji: currentEmoji,
-        channel: originalMessage.channel, 
-        ts: originalMessage.ts 
+        channel: originalMessage.channel,
+        ts: originalMessage.ts
       });
     } catch (error) {
       this.logger.warn('Failed to update message reaction', error);
