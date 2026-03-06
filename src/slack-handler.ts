@@ -408,10 +408,6 @@ export class SlackHandler {
           for (const part of content) {
             if (part.type !== 'tool_result') continue;
 
-            // Skip generate_images — we only upload on select_image
-            const toolName = toolNameMap.get(part.tool_use_id || '') || '';
-            if (toolName.includes('generate_images')) continue;
-
             const resultContent = Array.isArray(part.content)
               ? part.content.map((c: any) => c.type === 'text' ? c.text : '').join(' ')
               : typeof part.content === 'string' ? part.content : '';
