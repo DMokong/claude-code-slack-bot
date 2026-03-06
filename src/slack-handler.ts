@@ -4,6 +4,7 @@ import { SDKMessage } from '@anthropic-ai/claude-code';
 import { Logger } from './logger';
 import { WorkingDirectoryManager } from './working-directory-manager';
 import { FileHandler, ProcessedFile } from './file-handler';
+import { ImageUploader } from './image-uploader';
 import { TodoManager, Todo } from './todo-manager';
 import { McpManager } from './mcp-manager';
 import { permissionServer } from './permission-mcp-server';
@@ -76,6 +77,7 @@ export class SlackHandler {
   private originalMessages: Map<string, { channel: string; ts: string }> = new Map(); // sessionKey -> original message info
   private currentReactions: Map<string, string> = new Map(); // sessionKey -> current emoji
   private botUserId: string | null = null;
+  private imageUploader: ImageUploader | null = null;
 
   constructor(app: App, claudeHandler: ClaudeHandler, mcpManager: McpManager) {
     this.app = app;
@@ -84,6 +86,13 @@ export class SlackHandler {
     this.workingDirManager = new WorkingDirectoryManager();
     this.fileHandler = new FileHandler();
     this.todoManager = new TodoManager();
+  }
+
+  private getImageUploader(): ImageUploader {
+    if (!this.imageUploader) {
+      this.imageUploader = new ImageUploader(this.app.client);
+    }
+    return this.imageUploader;
   }
 
   async handleMessage(event: MessageEvent, say: any) {
@@ -253,6 +262,7 @@ export class SlackHandler {
     }
 
     let currentMessages: string[] = [];
+    let toolNameMap: Map<string, string> = new Map(); // tool_use_id -> tool_name
     let statusMessageTs: string | undefined;
 
     try {
@@ -299,6 +309,13 @@ export class SlackHandler {
           const hasToolUse = message.message.content?.some((part: any) => part.type === 'tool_use');
           
           if (hasToolUse) {
+            // Track tool_use_id → tool_name for result processing
+            for (const part of message.message.content || []) {
+              if (part.type === 'tool_use' && part.id) {
+                toolNameMap.set(part.id, part.name);
+              }
+            }
+
             // Update status to show working
             if (statusMessageTs) {
               await this.app.client.chat.update({
@@ -336,6 +353,23 @@ export class SlackHandler {
                 });
               }
             }
+
+            // Check write tools for image file outputs
+            const imageWriteTools = message.message.content?.filter((part: any) =>
+              part.type === 'tool_use' &&
+              ['Write', 'NotebookEdit'].includes(part.name) &&
+              ImageUploader.isImagePath(part.input?.file_path || '')
+            );
+            if (imageWriteTools && imageWriteTools.length > 0) {
+              const imagePaths = imageWriteTools.map((t: any) => t.input.file_path);
+              // Small delay to ensure file is written to disk
+              await new Promise(resolve => setTimeout(resolve, 500));
+              await this.getImageUploader().uploadImages(
+                imagePaths,
+                channel,
+                thread_ts || ts,
+              );
+            }
           } else {
             // Handle regular text content
             const content = this.extractTextContent(message);
@@ -366,6 +400,30 @@ export class SlackHandler {
                 text: formatted,
                 thread_ts: thread_ts || ts,
               });
+            }
+          }
+        } else if (message.type === 'user' && message.message?.content) {
+          // Process tool_result messages for image paths
+          const content = Array.isArray(message.message.content) ? message.message.content : [];
+          for (const part of content) {
+            if (part.type !== 'tool_result') continue;
+
+            // Skip generate_images — we only upload on select_image
+            const toolName = toolNameMap.get(part.tool_use_id || '');
+            if (toolName?.includes('generate_images')) continue;
+
+            const resultContent = Array.isArray(part.content)
+              ? part.content.map((c: any) => c.type === 'text' ? c.text : '').join(' ')
+              : typeof part.content === 'string' ? part.content : '';
+            if (!resultContent) continue;
+
+            const imagePaths = ImageUploader.extractImagePaths(resultContent);
+            if (imagePaths.length > 0) {
+              await this.getImageUploader().uploadImages(
+                imagePaths,
+                channel,
+                thread_ts || ts,
+              );
             }
           }
         }
