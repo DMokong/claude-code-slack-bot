@@ -90,6 +90,67 @@ describe('ImageUploader', () => {
       const text = 'File at /tmp/my-image_v2.png';
       expect(ImageUploader.extractImagePaths(text)).toEqual(['/tmp/my-image_v2.png']);
     });
+
+    it('resolves paths via cwd/local/ when cwd is provided', () => {
+      // Create a temp directory structure: cwd/local/2026/03/img.png
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'img-test-'));
+      const localDir = path.join(cwd, 'local', '2026', '03');
+      fs.mkdirSync(localDir, { recursive: true });
+      const imgPath = path.join(localDir, 'pirate-cat.png');
+      fs.writeFileSync(imgPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+      const text = 'Image at /2026/03/pirate-cat.png done';
+      const result = ImageUploader.extractImagePaths(text, cwd);
+
+      expect(result).toEqual([imgPath]);
+
+      // Cleanup
+      fs.rmSync(cwd, { recursive: true });
+    });
+
+    it('returns original path when cwd resolution fails', () => {
+      const text = 'Image at /nonexistent/path/img.png';
+      const result = ImageUploader.extractImagePaths(text, '/tmp/no-such-cwd');
+      expect(result).toEqual(['/nonexistent/path/img.png']);
+    });
+  });
+
+  describe('resolveImagePath', () => {
+    it('returns path as-is if it exists on disk', () => {
+      const tmpFile = path.join(os.tmpdir(), `resolve-test-${Date.now()}.png`);
+      fs.writeFileSync(tmpFile, Buffer.from([0x89]));
+
+      expect(ImageUploader.resolveImagePath(tmpFile, '/some/cwd')).toBe(tmpFile);
+
+      fs.unlinkSync(tmpFile);
+    });
+
+    it('resolves via cwd/local/ for image-gen file:// paths', () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'resolve-'));
+      const localDir = path.join(cwd, 'local', '2026', '03');
+      fs.mkdirSync(localDir, { recursive: true });
+      const imgPath = path.join(localDir, 'cat.png');
+      fs.writeFileSync(imgPath, Buffer.from([0x89]));
+
+      expect(ImageUploader.resolveImagePath('/2026/03/cat.png', cwd)).toBe(imgPath);
+
+      fs.rmSync(cwd, { recursive: true });
+    });
+
+    it('resolves relative to cwd as fallback', () => {
+      const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'resolve-'));
+      const imgPath = path.join(cwd, '2026', '03', 'cat.png');
+      fs.mkdirSync(path.join(cwd, '2026', '03'), { recursive: true });
+      fs.writeFileSync(imgPath, Buffer.from([0x89]));
+
+      expect(ImageUploader.resolveImagePath('/2026/03/cat.png', cwd)).toBe(imgPath);
+
+      fs.rmSync(cwd, { recursive: true });
+    });
+
+    it('returns original path when nothing resolves', () => {
+      expect(ImageUploader.resolveImagePath('/no/such/file.png', '/tmp')).toBe('/no/such/file.png');
+    });
   });
 
   describe('uploadImage', () => {

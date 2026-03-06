@@ -23,9 +23,35 @@ export class ImageUploader {
     return IMAGE_EXTENSIONS.has(ext);
   }
 
-  static extractImagePaths(text: string): string[] {
+  static extractImagePaths(text: string, cwd?: string): string[] {
     const matches = text.match(IMAGE_PATH_REGEX) || [];
-    return [...new Set(matches)];
+    const unique = [...new Set(matches)];
+
+    // Resolve file:// URLs and relative paths against cwd
+    if (cwd) {
+      return unique.map(p => ImageUploader.resolveImagePath(p, cwd));
+    }
+    return unique;
+  }
+
+  /**
+   * Resolve an extracted image path to an actual filesystem path.
+   * Handles file:// URL paths (e.g., /2026/03/img.png → {cwd}/local/2026/03/img.png)
+   */
+  static resolveImagePath(imagePath: string, cwd: string): string {
+    // If the path exists as-is, use it
+    if (fs.existsSync(imagePath)) return imagePath;
+
+    // Try resolving as {cwd}/local/{path} (image-gen-mcp file:// storage)
+    const localPath = path.join(cwd, 'local', imagePath);
+    if (fs.existsSync(localPath)) return localPath;
+
+    // Try resolving relative to cwd
+    const cwdPath = path.join(cwd, imagePath);
+    if (fs.existsSync(cwdPath)) return cwdPath;
+
+    // Return original — uploadImage will skip if not found
+    return imagePath;
   }
 
   async uploadImage(filePath: string, channelId: string, threadTs: string): Promise<boolean> {
