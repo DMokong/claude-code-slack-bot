@@ -16,6 +16,7 @@ The bot allows users to interact with Claude Code through Slack, providing real-
 - **`src/claude-handler.ts`** - Claude Code SDK integration and session management
 - **`src/working-directory-manager.ts`** - Working directory configuration and resolution
 - **`src/file-handler.ts`** - File upload processing and content embedding
+- **`src/image-uploader.ts`** - Image detection and upload to Slack threads
 - **`src/todo-manager.ts`** - Task list management and progress tracking
 - **`src/mcp-manager.ts`** - MCP server configuration and management
 - **`src/logger.ts`** - Structured logging utility
@@ -43,6 +44,14 @@ The bot allows users to interact with Claude Code through Slack, providing real-
 - **Image Analysis**: Images are saved for Claude to analyze using the Read tool
 - **Size Limits**: 50MB file size limit with automatic cleanup
 - **Security**: Secure download using Slack bot token authentication
+
+#### 3a. Image Upload Support
+The bot automatically uploads images to Slack threads when Claude generates or writes image files:
+- **Write/NotebookEdit**: When Claude writes a file with an image extension (.png, .jpg, .jpeg, .gif, .webp, .svg, .bmp), it's uploaded to the thread
+- **image-gen MCP**: When `select_image` is called, the selected image is uploaded
+- **Bash output**: Image file paths detected in Bash command output are uploaded
+- **Cap**: Max 10 images per tool invocation
+- **generate_images**: Previews are NOT uploaded — only the final `select_image` result
 
 #### 4. Advanced Message Handling
 - **Streaming Responses**: Real-time message updates as Claude generates responses
@@ -187,6 +196,7 @@ src/
 ├── claude-handler.ts             # Claude Code SDK integration
 ├── working-directory-manager.ts  # Directory management
 ├── file-handler.ts               # File processing
+├── image-uploader.ts             # Image upload to Slack
 ├── todo-manager.ts               # Task tracking
 ├── mcp-manager.ts                # MCP server management
 ├── logger.ts                     # Logging utility
