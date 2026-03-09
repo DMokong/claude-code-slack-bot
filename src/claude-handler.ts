@@ -124,7 +124,10 @@ export class ClaudeHandler {
       // As a workaround, append a system prompt nudge so Claude invokes the remember
       // skill before finishing. See claudeclaw/docs/plans/remember-hook-alternatives.md
       // for future options (SDK programmatic hooks, post-query transcript analysis).
-      appendSystemPrompt: 'Before finishing your response, use the remember skill to scan this conversation for any preferences, project context, or relationship continuity worth saving to long-term memory. If nothing is worth saving, skip silently.',
+      appendSystemPrompt: [
+        slackContext ? `You are responding in Slack channel ID: ${slackContext.channel}${slackContext.threadTs ? ` (thread: ${slackContext.threadTs})` : ''}. Check CLAUDE.md for any channel-specific protocols (e.g., #cc-ai Discourse Protocol).` : '',
+        'Before finishing your response, use the remember skill to scan this conversation for any preferences, project context, or relationship continuity worth saving to long-term memory. If nothing is worth saving, skip silently.',
+      ].filter(Boolean).join('\n\n'),
     };
 
     if (workingDirectory) {
