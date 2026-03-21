@@ -119,7 +119,7 @@ export class ClaudeHandler {
     const options: any = {
       outputFormat: 'stream-json',
       permissionMode: 'bypassPermissions',
-      pathToClaudeCodeExecutable: '/Users/dustincheng/.local/bin/claude',
+      pathToClaudeCodeExecutable: process.env.CLAUDE_EXECUTABLE || 'claude',
       // Prompt-based hooks (SessionEnd, PreCompact) don't fire outside REPL mode.
       // As a workaround, append a system prompt nudge so Claude invokes the remember
       // skill before finishing. See claudeclaw/docs/plans/remember-hook-alternatives.md
