@@ -28,11 +28,11 @@ Messages within the same thread are serialized via a promise-chain mutex — no 
 
 When Claude generates or writes images (via MCP tools, file writes, or bash output), the bot detects them and uploads directly to the Slack thread using `files.uploadV2`. Images render inline — no public URLs, no external hosting.
 
-- `select_image` (image-gen MCP) → upload selected image
+- `generate_images` (image-gen MCP) → upload all previews to the thread so you can review and select
+- `select_image` → upload the final selected image
 - Write/edit with image extension → upload the file
 - Bash output containing image paths → upload detected files
 - Cap: 10 images per tool invocation
-- `generate_images` previews are skipped — only the final selection uploads
 
 ### Noise Reduction
 
