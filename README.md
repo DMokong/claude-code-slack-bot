@@ -42,17 +42,21 @@ The upstream bot posts every tool use to the thread. That's a lot of noise when 
 - **Silent**: Read, Grep, Glob, Bash, Agent (research noise)
 - **Status messages**: Deleted on success, preserved on error
 
-### Working Directory Hierarchy
+### Working Directory = Claude Project Context
+
+This is more important than it sounds. `BASE_DIRECTORY` + `DEFAULT_WORKING_DIRECTORY` determine where Claude Code launches — which means it inherits the full Claude project configuration from that directory:
+
+- **CLAUDE.md** — system prompt, personality, conventions, protocols
+- **`.claude/settings.json`** — permissions, allowed tools, plugin configuration
+- **`.claude/plugins/`** — custom skills, hooks, memory systems
+- **MCP servers** — any project-scoped MCP config
+- **`.claude/rules/`** — always-loaded behavioral rules
+
+If you've invested in customizing your Claude Code project setup — personality, memory, plugins, MCP servers, permission policies — the Slack bot inherits all of it. The agent in Slack is the same agent you get in the terminal, with the same context and capabilities. Threads can override with `cwd <path>` for cross-project work.
 
 ```
-Thread-specific > Channel default > DM-specific
+Thread-specific > Channel default > DEFAULT_WORKING_DIRECTORY
 ```
-
-Set `DEFAULT_WORKING_DIRECTORY` in `.env` and the bot resolves it automatically — no "please set a working directory" prompt on every first message. Threads can override with `cwd <path>`.
-
-### MCP Server Integration
-
-Configure any MCP servers in `mcp-servers.json` and they're available to every Claude session. Filesystem, Slack, Gmail, Calendar, Home Assistant, image generation — whatever your setup needs. All MCP tools are auto-allowed.
 
 ## Architecture
 
