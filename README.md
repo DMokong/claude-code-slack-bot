@@ -174,7 +174,7 @@ npm run build && npm run prod   # Production
 
 ## Customization Ideas
 
-This is a personal deployment bot — it's designed to be forked and customized. Some things you might want to add:
+This is a personal deployment bot — it's designed to be forked and customized. The following have all been implemented in my own setup outside this repo. If you're interested in seeing how any of these work in practice, feel free to reach out.
 
 - **System prompt injection**: Append context per-channel (e.g., discourse mode for discussion channels, ops mode for incident channels)
 - **Memory integration**: Nudge Claude to save context before sessions end (see `appendSystemPrompt` in `claude-handler.ts`)
