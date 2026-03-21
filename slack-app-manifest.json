@@ -1,9 +1,9 @@
 {
   "display_information": {
     "name": "Claude Code Bot",
-    "description": "AI-powered coding assistant using Claude Code SDK",
+    "description": "Claude Code agent in Slack — persistent sessions per thread",
     "background_color": "#4A154B",
-    "long_description": "This bot integrates Claude Code SDK with Slack to provide AI-powered coding assistance directly in your workspace. It supports streaming responses, maintains conversation context, and can help with code reviews, debugging, and general programming questions."
+    "long_description": "A Slack bot that gives Claude Code a persistent, multi-threaded home in your workspace. Each thread becomes a resumable session with full tool access, MCP servers, and working directory context. Supports image uploads, streaming responses, and file analysis."
   },
   "features": {
     "app_home": {
@@ -23,6 +23,7 @@
         "channels:history",
         "chat:write",
         "chat:write.public",
+        "files:write",
         "im:history",
         "im:read",
         "im:write",

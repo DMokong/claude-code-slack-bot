@@ -1,7 +1,7 @@
 {
-  "name": "claude-code-slack",
+  "name": "claude-code-slack-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "A Slack bot that gives Claude Code a persistent, multi-threaded home in your workspace",
   "main": "index.js",
   "scripts": {
     "start": "tsx src/index.ts",
@@ -10,9 +10,9 @@
     "prod": "node dist/index.js",
     "test": "vitest run"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["claude-code", "slack-bot", "ai-agent", "mcp"],
+  "author": "Dustin Cheng",
+  "license": "MIT",
   "devDependencies": {
     "@types/node": "^24.0.4",
     "@types/uuid": "^10.0.0",
