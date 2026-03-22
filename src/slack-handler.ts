@@ -335,11 +335,6 @@ export class SlackHandler {
           } else if (evt.type === 'content_block_delta' && !insideThinkingBlock) {
             // Only stream text deltas from non-thinking blocks
             if (evt.delta?.type === 'text_delta' && evt.delta.text) {
-              // Delete "Thinking..." status on first real text (streaming replaces it)
-              if (statusMessageTs) {
-                this.app.client.chat.delete({ channel, ts: statusMessageTs }).catch(() => {});
-                statusMessageTs = undefined;
-              }
               await streamManager.append(evt.delta.text);
             }
           }
@@ -363,13 +358,15 @@ export class SlackHandler {
               }
             }
 
-            // Update status message to show working (both modes)
+            // Update status message with what the agent is doing
             if (statusMessageTs) {
+              const toolParts = message.message.content?.filter((part: any) => part.type === 'tool_use') || [];
+              const statusText = this.getToolStatusText(toolParts);
               await this.app.client.chat.update({
                 channel,
                 ts: statusMessageTs,
-                text: '⚙️ *Working...*',
-              });
+                text: statusText,
+              }).catch(() => {});
             }
 
             // Update reaction to show working
@@ -579,6 +576,57 @@ export class SlackHandler {
       }
     }
     }); // end withThreadLock
+  }
+
+  /**
+   * Generate a concise status text from tool_use parts for the status message.
+   * Turns silent tools into short progress indicators.
+   */
+  private getToolStatusText(toolParts: any[]): string {
+    if (toolParts.length === 0) return '⚙️ *Working...*';
+
+    const first = toolParts[0];
+    const name = first.name;
+    const input = first.input || {};
+
+    switch (name) {
+      case 'Read':
+        return `📖 *Reading \`${this.shortenPath(input.file_path)}\`...*`;
+      case 'Grep':
+        return `🔍 *Searching for \`${this.truncateString(input.pattern, 30)}\`...*`;
+      case 'Glob':
+        return `🔍 *Finding files matching \`${this.truncateString(input.pattern, 30)}\`...*`;
+      case 'Bash':
+        return `🖥️ *Running \`${this.truncateString(input.command, 40)}\`...*`;
+      case 'Write':
+        return `📝 *Writing \`${this.shortenPath(input.file_path)}\`...*`;
+      case 'Edit':
+      case 'MultiEdit':
+        return `✏️ *Editing \`${this.shortenPath(input.file_path)}\`...*`;
+      case 'NotebookEdit':
+        return `📓 *Editing notebook...*`;
+      case 'Agent':
+        return `🤖 *Researching...*`;
+      case 'TodoWrite':
+        return `📋 *Updating tasks...*`;
+      case 'Skill':
+        return `⚡ *Running \`${input.skill || 'skill'}\`...*`;
+      case 'ToolSearch':
+        return `🔧 *Looking up tools...*`;
+      default:
+        if (name?.startsWith('mcp__')) {
+          const mcpTool = name.split('__').pop() || name;
+          return `🔌 *Using \`${mcpTool}\`...*`;
+        }
+        return `⚙️ *${name}...*`;
+    }
+  }
+
+  private shortenPath(filePath: string): string {
+    if (!filePath) return '...';
+    const parts = filePath.split('/');
+    if (parts.length <= 2) return filePath;
+    return parts.slice(-2).join('/');
   }
 
   private extractTextContent(message: SDKMessage): string | null {
