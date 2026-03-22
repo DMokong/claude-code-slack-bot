@@ -264,7 +264,6 @@ export class SlackHandler {
 
     let currentMessages: string[] = [];
     let toolNameMap: Map<string, string> = new Map(); // tool_use_id -> tool_name
-    let statusMessageTs: string | undefined;
     const useNativeStreaming = config.streaming.mode === 'native';
 
     // Create stream manager for native streaming mode
@@ -296,12 +295,8 @@ export class SlackHandler {
         streamingMode: config.streaming.mode,
       });
 
-      // Show "Thinking..." status message immediately so the user knows we received their message
-      const statusResult = await say({
-        text: '🤔 *Thinking...*',
-        thread_ts: thread_ts || ts,
-      });
-      statusMessageTs = statusResult.ts;
+      // Set native thread status indicator (shows as typing indicator with custom text)
+      await this.setThreadStatus(channel, thread_ts || ts, 'is thinking...');
 
       // Add thinking reaction to original message
       await this.updateMessageReaction(sessionKey, '🤔');
@@ -358,16 +353,10 @@ export class SlackHandler {
               }
             }
 
-            // Update status message with what the agent is doing
-            if (statusMessageTs) {
-              const toolParts = message.message.content?.filter((part: any) => part.type === 'tool_use') || [];
-              const statusText = this.getToolStatusText(toolParts);
-              await this.app.client.chat.update({
-                channel,
-                ts: statusMessageTs,
-                text: statusText,
-              }).catch(() => {});
-            }
+            // Update thread status with what the agent is doing
+            const toolParts = message.message.content?.filter((part: any) => part.type === 'tool_use') || [];
+            const statusText = this.getToolStatusDescription(toolParts);
+            await this.setThreadStatus(channel, thread_ts || ts, statusText);
 
             // Update reaction to show working
             await this.updateMessageReaction(sessionKey, '⚙️');
@@ -492,17 +481,8 @@ export class SlackHandler {
         }
       }
 
-      // Clean up status message (legacy mode only)
-      if (statusMessageTs) {
-        try {
-          await this.app.client.chat.delete({
-            channel,
-            ts: statusMessageTs,
-          });
-        } catch (deleteError) {
-          this.logger.debug('Could not delete status message', deleteError);
-        }
-      }
+      // Clear thread status (auto-clears on message send, but explicit clear is safer)
+      await this.setThreadStatus(channel, thread_ts || ts, '');
 
       // Update reaction to show completion
       await this.updateMessageReaction(sessionKey, '✅');
@@ -524,16 +504,11 @@ export class SlackHandler {
         await streamManager.stop();
       }
 
+      // Clear thread status on error
+      await this.setThreadStatus(channel, thread_ts || ts, '');
+
       if (error.name !== 'AbortError') {
         this.logger.error('Error handling message', error);
-
-        if (statusMessageTs) {
-          await this.app.client.chat.update({
-            channel,
-            ts: statusMessageTs,
-            text: '❌ *Error occurred*',
-          });
-        }
 
         // Update reaction to show error
         await this.updateMessageReaction(sessionKey, '❌');
@@ -544,14 +519,6 @@ export class SlackHandler {
         });
       } else {
         this.logger.debug('Request was aborted', { sessionKey });
-
-        if (statusMessageTs) {
-          await this.app.client.chat.update({
-            channel,
-            ts: statusMessageTs,
-            text: '⏹️ *Cancelled*',
-          });
-        }
 
         // Update reaction to show cancellation
         await this.updateMessageReaction(sessionKey, '⏹️');
@@ -579,11 +546,39 @@ export class SlackHandler {
   }
 
   /**
-   * Generate a concise status text from tool_use parts for the status message.
-   * Turns silent tools into short progress indicators.
+   * Set the native Slack thread status indicator.
+   * Shows as "<App Name> <status>" with a typing animation.
+   * Pass empty string to clear.
    */
-  private getToolStatusText(toolParts: any[]): string {
-    if (toolParts.length === 0) return '⚙️ *Working...*';
+  private async setThreadStatus(channel: string, threadTs: string, status: string): Promise<void> {
+    try {
+      const client = this.app.client as any;
+      if (client.assistant?.threads?.setStatus) {
+        await client.assistant.threads.setStatus({
+          channel_id: channel,
+          thread_ts: threadTs,
+          status,
+        });
+      } else if (typeof client.apiCall === 'function') {
+        await client.apiCall('assistant.threads.setStatus', {
+          channel_id: channel,
+          thread_ts: threadTs,
+          status,
+        });
+      }
+    } catch (error) {
+      this.logger.debug('Thread status update failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Generate a concise status description from tool_use parts.
+   * Used for the native thread status indicator (Slack prepends the app name).
+   */
+  private getToolStatusDescription(toolParts: any[]): string {
+    if (toolParts.length === 0) return 'is working...';
 
     const first = toolParts[0];
     const name = first.name;
@@ -591,34 +586,34 @@ export class SlackHandler {
 
     switch (name) {
       case 'Read':
-        return `📖 *Reading \`${this.shortenPath(input.file_path)}\`...*`;
+        return `is reading ${this.shortenPath(input.file_path)}`;
       case 'Grep':
-        return `🔍 *Searching for \`${this.truncateString(input.pattern, 30)}\`...*`;
+        return `is searching for "${this.truncateString(input.pattern, 30)}"`;
       case 'Glob':
-        return `🔍 *Finding files matching \`${this.truncateString(input.pattern, 30)}\`...*`;
+        return `is finding files matching ${this.truncateString(input.pattern, 30)}`;
       case 'Bash':
-        return `🖥️ *Running \`${this.truncateString(input.command, 40)}\`...*`;
+        return `is running a command...`;
       case 'Write':
-        return `📝 *Writing \`${this.shortenPath(input.file_path)}\`...*`;
+        return `is writing ${this.shortenPath(input.file_path)}`;
       case 'Edit':
       case 'MultiEdit':
-        return `✏️ *Editing \`${this.shortenPath(input.file_path)}\`...*`;
+        return `is editing ${this.shortenPath(input.file_path)}`;
       case 'NotebookEdit':
-        return `📓 *Editing notebook...*`;
+        return `is editing a notebook...`;
       case 'Agent':
-        return `🤖 *Researching...*`;
+        return `is researching...`;
       case 'TodoWrite':
-        return `📋 *Updating tasks...*`;
+        return `is updating tasks...`;
       case 'Skill':
-        return `⚡ *Running \`${input.skill || 'skill'}\`...*`;
+        return `is running ${input.skill || 'a skill'}...`;
       case 'ToolSearch':
-        return `🔧 *Looking up tools...*`;
+        return `is looking up tools...`;
       default:
         if (name?.startsWith('mcp__')) {
           const mcpTool = name.split('__').pop() || name;
-          return `🔌 *Using \`${mcpTool}\`...*`;
+          return `is using ${mcpTool}...`;
         }
-        return `⚙️ *${name}...*`;
+        return `is working...`;
     }
   }
 
