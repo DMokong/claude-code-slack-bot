@@ -449,25 +449,22 @@ export class SlackHandler {
 
           if (message.subtype === 'success' && (message as any).result) {
             const finalResult = (message as any).result;
-            // In native streaming mode, text was already streamed — only post if it's different
-            if (finalResult && !currentMessages.includes(finalResult)) {
-              if (streamManager && !streamManager.failed) {
-                // Text was already streamed, skip duplicate posting
-              } else {
-                const formatted = this.formatMessage(finalResult, true);
+
+            if (streamManager?.failed) {
+              // Streaming failed mid-response — post accumulated fallback text
+              const fallback = streamManager.consumeFallbackText();
+              if (fallback) {
+                const formatted = this.formatMessage(fallback, true);
                 await say({
                   text: formatted,
                   thread_ts: thread_ts || ts,
                 });
               }
-            }
-          }
-
-          // Post fallback text if streaming failed
-          if (streamManager?.failed) {
-            const fallback = streamManager.consumeFallbackText();
-            if (fallback) {
-              const formatted = this.formatMessage(fallback, true);
+            } else if (streamManager) {
+              // Native streaming succeeded — text was already streamed, skip duplicate
+            } else if (finalResult && !currentMessages.includes(finalResult)) {
+              // Legacy mode — post final result as a message
+              const formatted = this.formatMessage(finalResult, true);
               await say({
                 text: formatted,
                 thread_ts: thread_ts || ts,
