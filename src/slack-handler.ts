@@ -296,14 +296,12 @@ export class SlackHandler {
         streamingMode: config.streaming.mode,
       });
 
-      if (!useNativeStreaming) {
-        // Legacy mode: show status message
-        const statusResult = await say({
-          text: '🤔 *Thinking...*',
-          thread_ts: thread_ts || ts,
-        });
-        statusMessageTs = statusResult.ts;
-      }
+      // Show "Thinking..." status message immediately so the user knows we received their message
+      const statusResult = await say({
+        text: '🤔 *Thinking...*',
+        thread_ts: thread_ts || ts,
+      });
+      statusMessageTs = statusResult.ts;
 
       // Add thinking reaction to original message
       await this.updateMessageReaction(sessionKey, '🤔');
@@ -337,6 +335,11 @@ export class SlackHandler {
           } else if (evt.type === 'content_block_delta' && !insideThinkingBlock) {
             // Only stream text deltas from non-thinking blocks
             if (evt.delta?.type === 'text_delta' && evt.delta.text) {
+              // Delete "Thinking..." status on first real text (streaming replaces it)
+              if (statusMessageTs) {
+                this.app.client.chat.delete({ channel, ts: statusMessageTs }).catch(() => {});
+                statusMessageTs = undefined;
+              }
               await streamManager.append(evt.delta.text);
             }
           }
@@ -360,15 +363,13 @@ export class SlackHandler {
               }
             }
 
-            if (!useNativeStreaming) {
-              // Legacy mode: update status message
-              if (statusMessageTs) {
-                await this.app.client.chat.update({
-                  channel,
-                  ts: statusMessageTs,
-                  text: '⚙️ *Working...*',
-                });
-              }
+            // Update status message to show working (both modes)
+            if (statusMessageTs) {
+              await this.app.client.chat.update({
+                channel,
+                ts: statusMessageTs,
+                text: '⚙️ *Working...*',
+              });
             }
 
             // Update reaction to show working
