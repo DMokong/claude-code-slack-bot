@@ -554,22 +554,28 @@ export class SlackHandler {
     try {
       const client = this.app.client as any;
       if (client.assistant?.threads?.setStatus) {
-        await client.assistant.threads.setStatus({
+        const result = await client.assistant.threads.setStatus({
           channel_id: channel,
           thread_ts: threadTs,
           status,
         });
+        this.logger.info('Thread status updated', { status, ok: result?.ok });
       } else if (typeof client.apiCall === 'function') {
-        await client.apiCall('assistant.threads.setStatus', {
+        const result = await client.apiCall('assistant.threads.setStatus', {
           channel_id: channel,
           thread_ts: threadTs,
           status,
         });
+        this.logger.info('Thread status updated (via apiCall)', { status, ok: result?.ok });
+      } else {
+        this.logger.warn('Thread status unavailable — no assistant.threads.setStatus on client');
       }
-    } catch (error) {
+    } catch (error: any) {
       this.logger.warn('Thread status update failed', {
         status,
-        error: error instanceof Error ? error.message : String(error),
+        error: error?.message || String(error),
+        code: error?.code,
+        data: error?.data,
       });
     }
   }
