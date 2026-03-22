@@ -118,6 +118,7 @@ export class ClaudeHandler {
   ): AsyncGenerator<SDKMessage, void, unknown> {
     const options: any = {
       outputFormat: 'stream-json',
+      includePartialMessages: true,
       permissionMode: 'bypassPermissions',
       pathToClaudeCodeExecutable: process.env.CLAUDE_EXECUTABLE || 'claude',
       // Prompt-based hooks (SessionEnd, PreCompact) don't fire outside REPL mode.

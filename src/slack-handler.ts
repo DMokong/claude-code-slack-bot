@@ -10,6 +10,7 @@ import { McpManager } from './mcp-manager';
 import { permissionServer } from './permission-mcp-server';
 import { config } from './config';
 import { withThreadLock } from './thread-lock';
+import { SlackStreamManager } from './slack-streamer';
 
 /**
  * Maps Unicode emoji characters to Slack reaction shortcode names.
@@ -264,51 +265,94 @@ export class SlackHandler {
     let currentMessages: string[] = [];
     let toolNameMap: Map<string, string> = new Map(); // tool_use_id -> tool_name
     let statusMessageTs: string | undefined;
+    const useNativeStreaming = config.streaming.mode === 'native';
+
+    // Create stream manager for native streaming mode
+    const streamManager = useNativeStreaming
+      ? new SlackStreamManager(
+          this.app.client,
+          channel,
+          thread_ts || ts,
+          (event as any).user,
+          (event as any).team || (event as any).user_team,
+          config.streaming.bufferSize,
+        )
+      : null;
+
+    // Track whether we're inside a thinking/reasoning block (to filter from streaming)
+    let insideThinkingBlock = false;
 
     try {
       // Prepare the prompt with file attachments
-      const finalPrompt = processedFiles.length > 0 
+      const finalPrompt = processedFiles.length > 0
         ? await this.fileHandler.formatFilePrompt(processedFiles, text || '')
         : text || '';
 
-      this.logger.info('Sending query to Claude Code SDK', { 
-        prompt: finalPrompt.substring(0, 200) + (finalPrompt.length > 200 ? '...' : ''), 
+      this.logger.info('Sending query to Claude Code SDK', {
+        prompt: finalPrompt.substring(0, 200) + (finalPrompt.length > 200 ? '...' : ''),
         sessionId: session.sessionId,
         workingDirectory,
         fileCount: processedFiles.length,
+        streamingMode: config.streaming.mode,
       });
 
-      // Send initial status message
-      const statusResult = await say({
-        text: '🤔 *Thinking...*',
-        thread_ts: thread_ts || ts,
-      });
-      statusMessageTs = statusResult.ts;
+      if (!useNativeStreaming) {
+        // Legacy mode: show status message
+        const statusResult = await say({
+          text: '🤔 *Thinking...*',
+          thread_ts: thread_ts || ts,
+        });
+        statusMessageTs = statusResult.ts;
+      }
 
-      // Add thinking reaction to original message (but don't spam if already set)
+      // Add thinking reaction to original message
       await this.updateMessageReaction(sessionKey, '🤔');
-      
+
       // Create Slack context for permission prompts
       const slackContext = {
         channel,
         threadTs: thread_ts,
         user
       };
-      
+
       for await (const message of this.claudeHandler.streamQuery(finalPrompt, session, abortController, workingDirectory, slackContext)) {
         if (abortController.signal.aborted) break;
 
         this.logger.debug('Received message from Claude SDK', {
           type: message.type,
           subtype: (message as any).subtype,
-          message: message,
         });
+
+        // Handle stream_event messages for native streaming
+        if (message.type === 'stream_event' && streamManager) {
+          const evt = (message as any).event;
+          if (!evt) continue;
+
+          // Track thinking block boundaries to filter them out
+          if (evt.type === 'content_block_start') {
+            const blockType = evt.content_block?.type;
+            insideThinkingBlock = blockType === 'thinking';
+          } else if (evt.type === 'content_block_stop') {
+            insideThinkingBlock = false;
+          } else if (evt.type === 'content_block_delta' && !insideThinkingBlock) {
+            // Only stream text deltas from non-thinking blocks
+            if (evt.delta?.type === 'text_delta' && evt.delta.text) {
+              await streamManager.append(evt.delta.text);
+            }
+          }
+          continue;
+        }
 
         if (message.type === 'assistant') {
           // Check if this is a tool use message
           const hasToolUse = message.message.content?.some((part: any) => part.type === 'tool_use');
-          
+
           if (hasToolUse) {
+            // Finalize current stream before tool broadcast
+            if (streamManager) {
+              await streamManager.stop();
+            }
+
             // Track tool_use_id → tool_name for result processing
             for (const part of message.message.content || []) {
               if (part.type === 'tool_use' && part.id) {
@@ -316,20 +360,22 @@ export class SlackHandler {
               }
             }
 
-            // Update status to show working
-            if (statusMessageTs) {
-              await this.app.client.chat.update({
-                channel,
-                ts: statusMessageTs,
-                text: '⚙️ *Working...*',
-              });
+            if (!useNativeStreaming) {
+              // Legacy mode: update status message
+              if (statusMessageTs) {
+                await this.app.client.chat.update({
+                  channel,
+                  ts: statusMessageTs,
+                  text: '⚙️ *Working...*',
+                });
+              }
             }
 
             // Update reaction to show working
             await this.updateMessageReaction(sessionKey, '⚙️');
 
             // Check for TodoWrite tool and handle it specially
-            const todoTool = message.message.content?.find((part: any) => 
+            const todoTool = message.message.content?.find((part: any) =>
               part.type === 'tool_use' && part.name === 'TodoWrite'
             );
 
@@ -370,13 +416,16 @@ export class SlackHandler {
                 thread_ts || ts,
               );
             }
-          } else {
-            // Handle regular text content
+
+            // Reset stream manager for next text segment
+            if (streamManager) {
+              streamManager.reset();
+            }
+          } else if (!useNativeStreaming) {
+            // Legacy mode: handle regular text content as separate messages
             const content = this.extractTextContent(message);
             if (content) {
               currentMessages.push(content);
-              
-              // Send each new piece of content as a separate message
               const formatted = this.formatMessage(content, false);
               await say({
                 text: formatted,
@@ -384,18 +433,41 @@ export class SlackHandler {
               });
             }
           }
+          // In native streaming mode, text is already handled via stream_event above
         } else if (message.type === 'result') {
+          // Finalize any active stream
+          if (streamManager) {
+            await streamManager.stop();
+          }
+
           this.logger.info('Received result from Claude SDK', {
             subtype: message.subtype,
             hasResult: message.subtype === 'success' && !!(message as any).result,
             totalCost: (message as any).total_cost_usd,
             duration: (message as any).duration_ms,
           });
-          
+
           if (message.subtype === 'success' && (message as any).result) {
             const finalResult = (message as any).result;
+            // In native streaming mode, text was already streamed — only post if it's different
             if (finalResult && !currentMessages.includes(finalResult)) {
-              const formatted = this.formatMessage(finalResult, true);
+              if (streamManager && !streamManager.failed) {
+                // Text was already streamed, skip duplicate posting
+              } else {
+                const formatted = this.formatMessage(finalResult, true);
+                await say({
+                  text: formatted,
+                  thread_ts: thread_ts || ts,
+                });
+              }
+            }
+          }
+
+          // Post fallback text if streaming failed
+          if (streamManager?.failed) {
+            const fallback = streamManager.consumeFallbackText();
+            if (fallback) {
+              const formatted = this.formatMessage(fallback, true);
               await say({
                 text: formatted,
                 thread_ts: thread_ts || ts,
@@ -425,7 +497,7 @@ export class SlackHandler {
         }
       }
 
-      // Delete the status message now that the real response has been sent
+      // Clean up status message (legacy mode only)
       if (statusMessageTs) {
         try {
           await this.app.client.chat.delete({
@@ -443,6 +515,8 @@ export class SlackHandler {
       this.logger.info('Completed processing message', {
         sessionKey,
         messageCount: currentMessages.length,
+        streamingMode: config.streaming.mode,
+        streamFailed: streamManager?.failed ?? false,
       });
 
       // Clean up temporary files
@@ -450,10 +524,14 @@ export class SlackHandler {
         await this.fileHandler.cleanupTempFiles(processedFiles);
       }
     } catch (error: any) {
+      // Ensure any active stream is stopped on error
+      if (streamManager) {
+        await streamManager.stop();
+      }
+
       if (error.name !== 'AbortError') {
         this.logger.error('Error handling message', error);
-        
-        // Update status to error
+
         if (statusMessageTs) {
           await this.app.client.chat.update({
             channel,
@@ -464,15 +542,14 @@ export class SlackHandler {
 
         // Update reaction to show error
         await this.updateMessageReaction(sessionKey, '❌');
-        
+
         await say({
           text: `Error: ${error.message || 'Something went wrong'}`,
           thread_ts: thread_ts || ts,
         });
       } else {
         this.logger.debug('Request was aborted', { sessionKey });
-        
-        // Update status to cancelled
+
         if (statusMessageTs) {
           await this.app.client.chat.update({
             channel,

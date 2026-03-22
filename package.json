@@ -10,7 +10,12 @@
     "prod": "node dist/index.js",
     "test": "vitest run"
   },
-  "keywords": ["claude-code", "slack-bot", "ai-agent", "mcp"],
+  "keywords": [
+    "claude-code",
+    "slack-bot",
+    "ai-agent",
+    "mcp"
+  ],
   "author": "Dustin Cheng",
   "license": "MIT",
   "devDependencies": {
@@ -24,6 +29,7 @@
     "@anthropic-ai/claude-code": "^1.0.128",
     "@modelcontextprotocol/sdk": "^1.13.2",
     "@slack/bolt": "^4.4.0",
+    "@slack/web-api": "^7.15.0",
     "@types/node-fetch": "^2.6.12",
     "dotenv": "^16.6.0",
     "node-fetch": "^3.3.2",
