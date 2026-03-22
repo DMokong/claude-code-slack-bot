@@ -567,7 +567,8 @@ export class SlackHandler {
         });
       }
     } catch (error) {
-      this.logger.debug('Thread status update failed', {
+      this.logger.warn('Thread status update failed', {
+        status,
         error: error instanceof Error ? error.message : String(error),
       });
     }
