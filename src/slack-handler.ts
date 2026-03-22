@@ -553,19 +553,21 @@ export class SlackHandler {
   private async setThreadStatus(channel: string, threadTs: string, status: string): Promise<void> {
     try {
       const client = this.app.client as any;
+      // Pass loading_messages alongside status so Slack displays our custom text
+      // instead of its default "Evaluating...", "Analysing..." rotation.
+      const payload: Record<string, any> = {
+        channel_id: channel,
+        thread_ts: threadTs,
+        status,
+      };
+      if (status) {
+        payload.loading_messages = [status];
+      }
       if (client.assistant?.threads?.setStatus) {
-        const result = await client.assistant.threads.setStatus({
-          channel_id: channel,
-          thread_ts: threadTs,
-          status,
-        });
+        const result = await client.assistant.threads.setStatus(payload);
         this.logger.info('Thread status updated', { status, ok: result?.ok });
       } else if (typeof client.apiCall === 'function') {
-        const result = await client.apiCall('assistant.threads.setStatus', {
-          channel_id: channel,
-          thread_ts: threadTs,
-          status,
-        });
+        const result = await client.apiCall('assistant.threads.setStatus', payload);
         this.logger.info('Thread status updated (via apiCall)', { status, ok: result?.ok });
       } else {
         this.logger.warn('Thread status unavailable — no assistant.threads.setStatus on client');
