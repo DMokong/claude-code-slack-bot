@@ -19,6 +19,10 @@ export const config = {
     mode: (process.env.SLACK_STREAMING_MODE || 'native') as 'native' | 'legacy' | 'off',
     bufferSize: parseInt(process.env.SLACK_STREAM_BUFFER_SIZE || '128', 10),
   },
+  finance: {
+    channelId: process.env.FINANCE_CHANNEL_ID || '',
+    inboxPath: process.env.FINANCE_INBOX_PATH || '',
+  },
   baseDirectory: process.env.BASE_DIRECTORY || '',
   defaultWorkingDirectory: process.env.DEFAULT_WORKING_DIRECTORY || '',
   debug: process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development',

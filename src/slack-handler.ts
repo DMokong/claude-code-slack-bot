@@ -101,13 +101,20 @@ export class SlackHandler {
     
     // Process any attached files
     let processedFiles: ProcessedFile[] = [];
+    const isFinanceChannel = this.fileHandler.isFinanceChannel(channel, config.finance.channelId);
     if (files && files.length > 0) {
-      this.logger.info('Processing uploaded files', { count: files.length });
-      processedFiles = await this.fileHandler.downloadAndProcessFiles(files);
-      
+      this.logger.info('Processing uploaded files', { count: files.length, isFinanceChannel });
+      processedFiles = await this.fileHandler.downloadAndProcessFiles(files, {
+        channelId: channel,
+        financeChannelId: config.finance.channelId,
+        financeInboxPath: config.finance.inboxPath,
+      });
+
       if (processedFiles.length > 0) {
+        const emoji = isFinanceChannel ? '💰' : '📎';
+        const action = isFinanceChannel ? 'saved to finance inbox' : 'Processing';
         await say({
-          text: `📎 Processing ${processedFiles.length} file(s): ${processedFiles.map(f => f.name).join(', ')}`,
+          text: `${emoji} ${action}: ${processedFiles.map(f => f.name).join(', ')}`,
           thread_ts: thread_ts || ts,
         });
       }
@@ -284,7 +291,7 @@ export class SlackHandler {
     try {
       // Prepare the prompt with file attachments
       const finalPrompt = processedFiles.length > 0
-        ? await this.fileHandler.formatFilePrompt(processedFiles, text || '')
+        ? await this.fileHandler.formatFilePrompt(processedFiles, text || '', { isFinanceChannel })
         : text || '';
 
       this.logger.info('Sending query to Claude Code SDK', {

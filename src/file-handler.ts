@@ -18,12 +18,27 @@ export interface ProcessedFile {
 export class FileHandler {
   private logger = new Logger('FileHandler');
 
-  async downloadAndProcessFiles(files: any[]): Promise<ProcessedFile[]> {
+  /**
+   * Download files with optional channel-aware routing.
+   * For #cc-finance, files are saved to data/finance/inbox/ instead of temp dir.
+   */
+  async downloadAndProcessFiles(files: any[], options?: { channelId?: string; financeChannelId?: string; financeInboxPath?: string }): Promise<ProcessedFile[]> {
     const processedFiles: ProcessedFile[] = [];
+
+    const isFinanceChannel = options?.channelId && options?.financeChannelId
+      && options.channelId === options.financeChannelId;
+    const targetDir = isFinanceChannel && options?.financeInboxPath
+      ? options.financeInboxPath : undefined;
+
+    if (isFinanceChannel) {
+      this.logger.info('Finance channel detected — routing files to finance inbox', {
+        targetDir,
+      });
+    }
 
     for (const file of files) {
       try {
-        const processed = await this.downloadFile(file);
+        const processed = await this.downloadFile(file, targetDir);
         if (processed) {
           processedFiles.push(processed);
         }
@@ -35,7 +50,11 @@ export class FileHandler {
     return processedFiles;
   }
 
-  private async downloadFile(file: any): Promise<ProcessedFile | null> {
+  isFinanceChannel(channelId: string, financeChannelId: string): boolean {
+    return !!financeChannelId && channelId === financeChannelId;
+  }
+
+  private async downloadFile(file: any, targetDir?: string): Promise<ProcessedFile | null> {
     // Check file size limit (50MB)
     if (file.size > 50 * 1024 * 1024) {
       this.logger.warn('File too large, skipping', { name: file.name, size: file.size });
@@ -56,8 +75,13 @@ export class FileHandler {
       }
 
       const buffer = await response.buffer();
-      const tempDir = os.tmpdir();
-      const tempPath = path.join(tempDir, `slack-file-${Date.now()}-${file.name}`);
+      const saveDir = targetDir || os.tmpdir();
+      if (targetDir) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+      const tempPath = targetDir
+        ? path.join(saveDir, file.name)
+        : path.join(saveDir, `slack-file-${Date.now()}-${file.name}`);
       
       fs.writeFileSync(tempPath, buffer);
 
@@ -103,9 +127,15 @@ export class FileHandler {
     return textTypes.some(type => mimetype.startsWith(type));
   }
 
-  async formatFilePrompt(files: ProcessedFile[], userText: string): Promise<string> {
+  async formatFilePrompt(files: ProcessedFile[], userText: string, options?: { isFinanceChannel?: boolean }): Promise<string> {
     let prompt = userText || 'Please analyze the uploaded files.';
-    
+
+    if (options?.isFinanceChannel && files.length > 0) {
+      const fileNames = files.map(f => f.name).join(', ');
+      prompt = `${userText || ''}\n\nFinancial files received and saved to data/finance/inbox/: ${fileNames}\n\nPlease run the finance ingestion pipeline to process these files. Read the ingestion prompt at tasks/prompts/finance-ingest.md and execute it to parse, categorize, and store the transactions.`.trim();
+      return prompt;
+    }
+
     if (files.length > 0) {
       prompt += '\n\nUploaded files:\n';
       
