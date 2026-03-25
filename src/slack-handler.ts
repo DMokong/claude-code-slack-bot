@@ -11,6 +11,7 @@ import { permissionServer } from './permission-mcp-server';
 import { config } from './config';
 import { withThreadLock } from './thread-lock';
 import { SlackStreamManager } from './slack-streamer';
+import { queryCostHistogram, queryDurationHistogram, queryCounter, errorCounter } from './telemetry';
 
 /**
  * Maps Unicode emoji characters to Slack reaction shortcode names.
@@ -101,18 +102,16 @@ export class SlackHandler {
     
     // Process any attached files
     let processedFiles: ProcessedFile[] = [];
-    const isFinanceChannel = this.fileHandler.isFinanceChannel(channel, config.finance.channelId);
+    const channelFileRoute = config.channelFileRoutes[channel];
     if (files && files.length > 0) {
-      this.logger.info('Processing uploaded files', { count: files.length, isFinanceChannel });
+      this.logger.info('Processing uploaded files', { count: files.length, hasFileRoute: !!channelFileRoute });
       processedFiles = await this.fileHandler.downloadAndProcessFiles(files, {
-        channelId: channel,
-        financeChannelId: config.finance.channelId,
-        financeInboxPath: config.finance.inboxPath,
+        targetDir: channelFileRoute,
       });
 
       if (processedFiles.length > 0) {
-        const emoji = isFinanceChannel ? '💰' : '📎';
-        const action = isFinanceChannel ? 'saved to finance inbox' : 'Processing';
+        const emoji = channelFileRoute ? '📂' : '📎';
+        const action = channelFileRoute ? `saved to ${channelFileRoute}` : 'Processing';
         await say({
           text: `${emoji} ${action}: ${processedFiles.map(f => f.name).join(', ')}`,
           thread_ts: thread_ts || ts,
@@ -291,7 +290,7 @@ export class SlackHandler {
     try {
       // Prepare the prompt with file attachments
       const finalPrompt = processedFiles.length > 0
-        ? await this.fileHandler.formatFilePrompt(processedFiles, text || '', { isFinanceChannel })
+        ? await this.fileHandler.formatFilePrompt(processedFiles, text || '')
         : text || '';
 
       this.logger.info('Sending query to Claude Code SDK', {
@@ -314,6 +313,9 @@ export class SlackHandler {
         threadTs: thread_ts,
         user
       };
+
+      // Record query start metric
+      queryCounter.add(1, { channel_id: channel, user_id: user });
 
       for await (const message of this.claudeHandler.streamQuery(finalPrompt, session, abortController, workingDirectory, slackContext)) {
         if (abortController.signal.aborted) break;
@@ -434,12 +436,28 @@ export class SlackHandler {
             await streamManager.stop();
           }
 
+          const resultCost = (message as any).total_cost_usd;
+          const resultDuration = (message as any).duration_ms;
+          const resultUsage = (message as any).usage;
+
           this.logger.info('Received result from Claude SDK', {
             subtype: message.subtype,
             hasResult: message.subtype === 'success' && !!(message as any).result,
-            totalCost: (message as any).total_cost_usd,
-            duration: (message as any).duration_ms,
+            totalCost: resultCost,
+            duration: resultDuration,
           });
+
+          // Record OTel metrics
+          const metricLabels = { channel_id: channel, user_id: user };
+          if (resultCost !== undefined) {
+            queryCostHistogram.record(resultCost, metricLabels);
+          }
+          if (resultDuration !== undefined) {
+            queryDurationHistogram.record(resultDuration, metricLabels);
+          }
+          if (message.subtype !== 'success') {
+            errorCounter.add(1, metricLabels);
+          }
 
           if (message.subtype === 'success' && (message as any).result) {
             const finalResult = (message as any).result;
