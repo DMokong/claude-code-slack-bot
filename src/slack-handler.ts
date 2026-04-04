@@ -11,7 +11,7 @@ import { permissionServer } from './permission-mcp-server';
 import { config } from './config';
 import { withThreadLock } from './thread-lock';
 import { SlackStreamManager } from './slack-streamer';
-import { queryCostHistogram, queryDurationHistogram, queryCounter, errorCounter } from './telemetry';
+import { queryCostHistogram, queryDurationHistogram, queryCounter, errorCounter, inputTokensHistogram, outputTokensHistogram, cacheReadTokensHistogram, cacheCreationTokensHistogram } from './telemetry';
 
 /**
  * Maps Unicode emoji characters to Slack reaction shortcode names.
@@ -47,6 +47,20 @@ export function emojiToShortcode(emoji: string): string {
 
   // Unknown Unicode emoji — caller handles warning
   return '';
+}
+
+// Channel ID → human-readable name for Grafana labels
+// IDs verified against Slack API 2026-04-04
+const CHANNEL_NAMES: Record<string, string> = {
+  C0AHLUV2Y83: 'cc-dev',
+  C0AKRDL2Y9F: 'cc-ai',
+  C0ANC0U9TK3: 'cc-health',
+  C0AHPTGLY5B: 'cc-morning-brief',
+  C0AHR97GRUN: 'cc-assistant',
+  C0AHTB0D3MY: 'cc-email',
+  C0AHWUSTM60: 'cc-logs',
+  C0AMP64Q555: 'cc-finance',
+  C0AGS5474SV: 'butler',
 }
 
 interface MessageEvent {
@@ -445,10 +459,12 @@ export class SlackHandler {
             hasResult: message.subtype === 'success' && !!(message as any).result,
             totalCost: resultCost,
             duration: resultDuration,
+            usage: resultUsage,
           });
 
           // Record OTel metrics
-          const metricLabels = { channel_id: channel, user_id: user };
+          const channelName = CHANNEL_NAMES[channel] ?? channel;
+          const metricLabels = { channel_id: channel, channel_name: channelName, user_id: user, thread_ts: thread_ts || ts };
           if (resultCost !== undefined) {
             queryCostHistogram.record(resultCost, metricLabels);
           }
@@ -457,6 +473,22 @@ export class SlackHandler {
           }
           if (message.subtype !== 'success') {
             errorCounter.add(1, metricLabels);
+          }
+
+          // Record token metrics
+          if (resultUsage) {
+            if (resultUsage.input_tokens !== undefined) {
+              inputTokensHistogram.record(resultUsage.input_tokens, metricLabels);
+            }
+            if (resultUsage.output_tokens !== undefined) {
+              outputTokensHistogram.record(resultUsage.output_tokens, metricLabels);
+            }
+            if (resultUsage.cache_read_input_tokens !== undefined) {
+              cacheReadTokensHistogram.record(resultUsage.cache_read_input_tokens, metricLabels);
+            }
+            if (resultUsage.cache_creation_input_tokens !== undefined) {
+              cacheCreationTokensHistogram.record(resultUsage.cache_creation_input_tokens, metricLabels);
+            }
           }
 
           if (message.subtype === 'success' && (message as any).result) {
