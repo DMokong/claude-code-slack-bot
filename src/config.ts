@@ -1,6 +1,33 @@
 import dotenv from 'dotenv';
+import { readFileSync } from 'fs';
 
 dotenv.config();
+
+function parseChannelFileRoutes(raw: string): Record<string, string> {
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function loadChannelMap(filePath?: string): Record<string, string> {
+  if (!filePath) return {};
+  try {
+    const raw = readFileSync(filePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch (e) {
+    console.warn(`[config] Could not load CHANNEL_MAP_PATH (${filePath}):`, e);
+  }
+  return {};
+}
 
 export const config = {
   slack: {
@@ -19,10 +46,8 @@ export const config = {
     mode: (process.env.SLACK_STREAMING_MODE || 'native') as 'native' | 'legacy' | 'off',
     bufferSize: parseInt(process.env.SLACK_STREAM_BUFFER_SIZE || '128', 10),
   },
-  finance: {
-    channelId: process.env.FINANCE_CHANNEL_ID || '',
-    inboxPath: process.env.FINANCE_INBOX_PATH || '',
-  },
+  channelFileRoutes: parseChannelFileRoutes(process.env.CHANNEL_FILE_ROUTES || '{}'),
+  channelNames: loadChannelMap(process.env.CHANNEL_MAP_PATH),
   baseDirectory: process.env.BASE_DIRECTORY || '',
   defaultWorkingDirectory: process.env.DEFAULT_WORKING_DIRECTORY || '',
   debug: process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development',

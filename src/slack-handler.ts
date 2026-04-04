@@ -50,18 +50,8 @@ export function emojiToShortcode(emoji: string): string {
 }
 
 // Channel ID → human-readable name for Grafana labels
-// IDs verified against Slack API 2026-04-04
-const CHANNEL_NAMES: Record<string, string> = {
-  C0AHLUV2Y83: 'cc-dev',
-  C0AKRDL2Y9F: 'cc-ai',
-  C0ANC0U9TK3: 'cc-health',
-  C0AHPTGLY5B: 'cc-morning-brief',
-  C0AHR97GRUN: 'cc-assistant',
-  C0AHTB0D3MY: 'cc-email',
-  C0AHWUSTM60: 'cc-logs',
-  C0AMP64Q555: 'cc-finance',
-  C0AGS5474SV: 'butler',
-}
+// Loaded at startup from CHANNEL_MAP_PATH (config/channel-map.json)
+const CHANNEL_NAMES: Record<string, string> = config.channelNames;
 
 interface MessageEvent {
   user: string;
