@@ -11,7 +11,7 @@ import { permissionServer } from './permission-mcp-server';
 import { config } from './config';
 import { withThreadLock } from './thread-lock';
 import { SlackStreamManager } from './slack-streamer';
-import { queryCostHistogram, queryDurationHistogram, queryCounter, errorCounter, inputTokensHistogram, outputTokensHistogram, cacheReadTokensHistogram, cacheCreationTokensHistogram, withQuerySpan } from './telemetry';
+import { withQuerySpan } from './telemetry';
 import { threadToSessionId } from './session-id';
 import { setEngine, getThreadEntry } from './thread-state-manager';
 import { resolveEngine, EngineResolution } from './engine-router';
@@ -460,215 +460,200 @@ export class SlackHandler {
         user
       };
 
-      // Record query start metric
-      queryCounter.add(1, { channel_id: channel, user_id: user });
+      let claudeTelemetry: { cost_usd?: number; duration_ms?: number; input_tokens?: number; output_tokens?: number; cache_read_tokens?: number; cache_creation_tokens?: number; is_error?: boolean } = {};
 
-      for await (const message of this.claudeHandler.streamQuery(finalPrompt, session, abortController, workingDirectory, slackContext)) {
-        if (abortController.signal.aborted) break;
+      await withQuerySpan({ channel_id: channel, user_id: user, thread_ts, engine: 'claude' }, async () => {
 
-        this.logger.debug('Received message from Claude SDK', {
-          type: message.type,
-          subtype: (message as any).subtype,
-        });
+        for await (const message of this.claudeHandler.streamQuery(finalPrompt, session, abortController, workingDirectory, slackContext)) {
+          if (abortController.signal.aborted) break;
 
-        // Handle stream_event messages for native streaming
-        if (message.type === 'stream_event' && streamManager) {
-          const evt = (message as any).event;
-          if (!evt) continue;
-
-          // Track thinking block boundaries to filter them out
-          if (evt.type === 'content_block_start') {
-            const blockType = evt.content_block?.type;
-            insideThinkingBlock = blockType === 'thinking';
-          } else if (evt.type === 'content_block_stop') {
-            insideThinkingBlock = false;
-          } else if (evt.type === 'content_block_delta' && !insideThinkingBlock) {
-            // Only stream text deltas from non-thinking blocks
-            if (evt.delta?.type === 'text_delta' && evt.delta.text) {
-              await streamManager.append(evt.delta.text);
-            }
-          }
-          continue;
-        }
-
-        if (message.type === 'assistant') {
-          // Check if this is a tool use message
-          const hasToolUse = message.message.content?.some((part: any) => part.type === 'tool_use');
-
-          if (hasToolUse) {
-            // Finalize current stream before tool broadcast
-            if (streamManager) {
-              await streamManager.stop();
-            }
-
-            // Track tool_use_id → tool_name for result processing
-            for (const part of message.message.content || []) {
-              if (part.type === 'tool_use' && part.id) {
-                toolNameMap.set(part.id, part.name);
-              }
-            }
-
-            // Update thread status with what the agent is doing
-            const toolParts = message.message.content?.filter((part: any) => part.type === 'tool_use') || [];
-            const statusText = this.getToolStatusDescription(toolParts);
-            await this.setThreadStatus(channel, thread_ts || ts, statusText);
-
-            // Update reaction to show working
-            await this.updateMessageReaction(sessionKey, '⚙️');
-
-            // Check for TodoWrite tool and handle it specially
-            const todoTool = message.message.content?.find((part: any) =>
-              part.type === 'tool_use' && part.name === 'TodoWrite'
-            );
-
-            if (todoTool) {
-              await this.handleTodoUpdate(todoTool.input, sessionKey, session?.sessionId, channel, thread_ts || ts, say);
-            }
-
-            // Only broadcast write/edit tool uses to Slack — read-only tools (Read, Grep, Glob, Agent, ToolSearch, etc.) are noise
-            const writeTools = message.message.content?.filter((part: any) =>
-              part.type === 'tool_use' && ['Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(part.name)
-            );
-            if (writeTools && writeTools.length > 0) {
-              const toolContent = this.formatToolUse([
-                ...message.message.content.filter((part: any) => part.type === 'text'),
-                ...writeTools,
-              ]);
-              if (toolContent) {
-                await say({
-                  text: toolContent,
-                  thread_ts: thread_ts || ts,
-                });
-              }
-            }
-
-            // Check write tools for image file outputs
-            const imageWriteTools = message.message.content?.filter((part: any) =>
-              part.type === 'tool_use' &&
-              ['Write', 'NotebookEdit'].includes(part.name) &&
-              ImageUploader.isImagePath(part.input?.file_path || '')
-            );
-            if (imageWriteTools && imageWriteTools.length > 0) {
-              const imagePaths = imageWriteTools.map((t: any) => t.input.file_path);
-              // Small delay to ensure file is written to disk
-              await new Promise(resolve => setTimeout(resolve, 500));
-              await this.getImageUploader().uploadImages(
-                imagePaths,
-                channel,
-                thread_ts || ts,
-              );
-            }
-
-            // Reset stream manager for next text segment
-            if (streamManager) {
-              streamManager.reset();
-            }
-          } else if (!useNativeStreaming) {
-            // Legacy mode: handle regular text content as separate messages
-            const content = this.extractTextContent(message);
-            if (content) {
-              currentMessages.push(content);
-              const formatted = this.formatMessage(content, false);
-              await say({
-                text: formatted,
-                thread_ts: thread_ts || ts,
-              });
-            }
-          }
-          // In native streaming mode, text is already handled via stream_event above
-        } else if (message.type === 'result') {
-          // Finalize any active stream
-          if (streamManager) {
-            await streamManager.stop();
-          }
-
-          const resultCost = (message as any).total_cost_usd;
-          const resultDuration = (message as any).duration_ms;
-          const resultUsage = (message as any).usage;
-
-          this.logger.info('Received result from Claude SDK', {
-            subtype: message.subtype,
-            hasResult: message.subtype === 'success' && !!(message as any).result,
-            totalCost: resultCost,
-            duration: resultDuration,
-            usage: resultUsage,
+          this.logger.debug('Received message from Claude SDK', {
+            type: message.type,
+            subtype: (message as any).subtype,
           });
 
-          // Record OTel metrics
-          const channelName = CHANNEL_NAMES[channel] ?? channel;
-          const metricLabels = { channel_id: channel, channel_name: channelName, user_id: user, thread_ts: thread_ts || ts };
-          if (resultCost !== undefined) {
-            queryCostHistogram.record(resultCost, metricLabels);
-          }
-          if (resultDuration !== undefined) {
-            queryDurationHistogram.record(resultDuration, metricLabels);
-          }
-          if (message.subtype !== 'success') {
-            errorCounter.add(1, metricLabels);
+          // Handle stream_event messages for native streaming
+          if (message.type === 'stream_event' && streamManager) {
+            const evt = (message as any).event;
+            if (!evt) continue;
+
+            // Track thinking block boundaries to filter them out
+            if (evt.type === 'content_block_start') {
+              const blockType = evt.content_block?.type;
+              insideThinkingBlock = blockType === 'thinking';
+            } else if (evt.type === 'content_block_stop') {
+              insideThinkingBlock = false;
+            } else if (evt.type === 'content_block_delta' && !insideThinkingBlock) {
+              // Only stream text deltas from non-thinking blocks
+              if (evt.delta?.type === 'text_delta' && evt.delta.text) {
+                await streamManager.append(evt.delta.text);
+              }
+            }
+            continue;
           }
 
-          // Record token metrics
-          if (resultUsage) {
-            if (resultUsage.input_tokens !== undefined) {
-              inputTokensHistogram.record(resultUsage.input_tokens, metricLabels);
-            }
-            if (resultUsage.output_tokens !== undefined) {
-              outputTokensHistogram.record(resultUsage.output_tokens, metricLabels);
-            }
-            if (resultUsage.cache_read_input_tokens !== undefined) {
-              cacheReadTokensHistogram.record(resultUsage.cache_read_input_tokens, metricLabels);
-            }
-            if (resultUsage.cache_creation_input_tokens !== undefined) {
-              cacheCreationTokensHistogram.record(resultUsage.cache_creation_input_tokens, metricLabels);
-            }
-          }
+          if (message.type === 'assistant') {
+            // Check if this is a tool use message
+            const hasToolUse = message.message.content?.some((part: any) => part.type === 'tool_use');
 
-          if (message.subtype === 'success' && (message as any).result) {
-            const finalResult = (message as any).result;
+            if (hasToolUse) {
+              // Finalize current stream before tool broadcast
+              if (streamManager) {
+                await streamManager.stop();
+              }
 
-            if (streamManager?.failed) {
-              // Streaming failed mid-response — post accumulated fallback text
-              const fallback = streamManager.consumeFallbackText();
-              if (fallback) {
-                const formatted = this.formatMessage(fallback, true);
+              // Track tool_use_id → tool_name for result processing
+              for (const part of message.message.content || []) {
+                if (part.type === 'tool_use' && part.id) {
+                  toolNameMap.set(part.id, part.name);
+                }
+              }
+
+              // Update thread status with what the agent is doing
+              const toolParts = message.message.content?.filter((part: any) => part.type === 'tool_use') || [];
+              const statusText = this.getToolStatusDescription(toolParts);
+              await this.setThreadStatus(channel, thread_ts || ts, statusText);
+
+              // Update reaction to show working
+              await this.updateMessageReaction(sessionKey, '⚙️');
+
+              // Check for TodoWrite tool and handle it specially
+              const todoTool = message.message.content?.find((part: any) =>
+                part.type === 'tool_use' && part.name === 'TodoWrite'
+              );
+
+              if (todoTool) {
+                await this.handleTodoUpdate(todoTool.input, sessionKey, session?.sessionId, channel, thread_ts || ts, say);
+              }
+
+              // Only broadcast write/edit tool uses to Slack — read-only tools (Read, Grep, Glob, Agent, ToolSearch, etc.) are noise
+              const writeTools = message.message.content?.filter((part: any) =>
+                part.type === 'tool_use' && ['Edit', 'MultiEdit', 'Write', 'NotebookEdit'].includes(part.name)
+              );
+              if (writeTools && writeTools.length > 0) {
+                const toolContent = this.formatToolUse([
+                  ...message.message.content.filter((part: any) => part.type === 'text'),
+                  ...writeTools,
+                ]);
+                if (toolContent) {
+                  await say({
+                    text: toolContent,
+                    thread_ts: thread_ts || ts,
+                  });
+                }
+              }
+
+              // Check write tools for image file outputs
+              const imageWriteTools = message.message.content?.filter((part: any) =>
+                part.type === 'tool_use' &&
+                ['Write', 'NotebookEdit'].includes(part.name) &&
+                ImageUploader.isImagePath(part.input?.file_path || '')
+              );
+              if (imageWriteTools && imageWriteTools.length > 0) {
+                const imagePaths = imageWriteTools.map((t: any) => t.input.file_path);
+                // Small delay to ensure file is written to disk
+                await new Promise(resolve => setTimeout(resolve, 500));
+                await this.getImageUploader().uploadImages(
+                  imagePaths,
+                  channel,
+                  thread_ts || ts,
+                );
+              }
+
+              // Reset stream manager for next text segment
+              if (streamManager) {
+                streamManager.reset();
+              }
+            } else if (!useNativeStreaming) {
+              // Legacy mode: handle regular text content as separate messages
+              const content = this.extractTextContent(message);
+              if (content) {
+                currentMessages.push(content);
+                const formatted = this.formatMessage(content, false);
                 await say({
                   text: formatted,
                   thread_ts: thread_ts || ts,
                 });
               }
-            } else if (streamManager) {
-              // Native streaming succeeded — text was already streamed, skip duplicate
-            } else if (finalResult && !currentMessages.includes(finalResult)) {
-              // Legacy mode — post final result as a message
-              const formatted = this.formatMessage(finalResult, true);
-              await say({
-                text: formatted,
-                thread_ts: thread_ts || ts,
-              });
             }
-          }
-        } else if (message.type === 'user' && message.message?.content) {
-          // Process tool_result messages for image paths
-          const content = Array.isArray(message.message.content) ? message.message.content : [];
-          for (const part of content) {
-            if (part.type !== 'tool_result') continue;
+            // In native streaming mode, text is already handled via stream_event above
+          } else if (message.type === 'result') {
+            // Finalize any active stream
+            if (streamManager) {
+              await streamManager.stop();
+            }
 
-            const resultContent = Array.isArray(part.content)
-              ? part.content.map((c: any) => c.type === 'text' ? c.text : '').join(' ')
-              : typeof part.content === 'string' ? part.content : '';
-            if (!resultContent) continue;
+            const resultCost = (message as any).total_cost_usd;
+            const resultDuration = (message as any).duration_ms;
+            const resultUsage = (message as any).usage;
 
-            const imagePaths = ImageUploader.extractImagePaths(resultContent, workingDirectory);
-            if (imagePaths.length > 0) {
-              await this.getImageUploader().uploadImages(
-                imagePaths,
-                channel,
-                thread_ts || ts,
-              );
+            this.logger.info('Received result from Claude SDK', {
+              subtype: message.subtype,
+              hasResult: message.subtype === 'success' && !!(message as any).result,
+              totalCost: resultCost,
+              duration: resultDuration,
+              usage: resultUsage,
+            });
+
+            claudeTelemetry = {
+              cost_usd: resultCost,
+              duration_ms: resultDuration,
+              input_tokens: resultUsage?.input_tokens,
+              output_tokens: resultUsage?.output_tokens,
+              cache_read_tokens: resultUsage?.cache_read_input_tokens,
+              cache_creation_tokens: resultUsage?.cache_creation_input_tokens,
+              is_error: message.subtype !== 'success',
+            };
+
+            if (message.subtype === 'success' && (message as any).result) {
+              const finalResult = (message as any).result;
+
+              if (streamManager?.failed) {
+                // Streaming failed mid-response — post accumulated fallback text
+                const fallback = streamManager.consumeFallbackText();
+                if (fallback) {
+                  const formatted = this.formatMessage(fallback, true);
+                  await say({
+                    text: formatted,
+                    thread_ts: thread_ts || ts,
+                  });
+                }
+              } else if (streamManager) {
+                // Native streaming succeeded — text was already streamed, skip duplicate
+              } else if (finalResult && !currentMessages.includes(finalResult)) {
+                // Legacy mode — post final result as a message
+                const formatted = this.formatMessage(finalResult, true);
+                await say({
+                  text: formatted,
+                  thread_ts: thread_ts || ts,
+                });
+              }
+            }
+          } else if (message.type === 'user' && message.message?.content) {
+            // Process tool_result messages for image paths
+            const content = Array.isArray(message.message.content) ? message.message.content : [];
+            for (const part of content) {
+              if (part.type !== 'tool_result') continue;
+
+              const resultContent = Array.isArray(part.content)
+                ? part.content.map((c: any) => c.type === 'text' ? c.text : '').join(' ')
+                : typeof part.content === 'string' ? part.content : '';
+              if (!resultContent) continue;
+
+              const imagePaths = ImageUploader.extractImagePaths(resultContent, workingDirectory);
+              if (imagePaths.length > 0) {
+                await this.getImageUploader().uploadImages(
+                  imagePaths,
+                  channel,
+                  thread_ts || ts,
+                );
+              }
             }
           }
         }
-      }
+
+        return { _telemetry: claudeTelemetry };
+      });
 
       // Clear thread status (auto-clears on message send, but explicit clear is safer)
       await this.setThreadStatus(channel, thread_ts || ts, '');
