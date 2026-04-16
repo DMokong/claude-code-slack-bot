@@ -15,3 +15,13 @@ export interface WorkingDirectoryConfig {
   directory: string;
   setAt: Date;
 }
+
+export type EngineMode = 'claude' | 'copilot';
+export type EngineSetBy = 'manual' | 'auto-fallback' | 'channel-default' | 'global-default';
+
+export interface ThreadStateEntry {
+  claude: string | null;      // SDK-assigned session ID; null if Claude never used in this thread
+  copilot: null;              // Copilot sessions are ephemeral — always null
+  engine: EngineMode;
+  setBy: EngineSetBy;
+}
