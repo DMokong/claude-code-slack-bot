@@ -12,6 +12,10 @@ import { config } from './config';
 import { withThreadLock } from './thread-lock';
 import { SlackStreamManager } from './slack-streamer';
 import { queryCostHistogram, queryDurationHistogram, queryCounter, errorCounter, inputTokensHistogram, outputTokensHistogram, cacheReadTokensHistogram, cacheCreationTokensHistogram } from './telemetry';
+import { threadToSessionId } from './session-id';
+import { setEngine, getThreadEntry } from './thread-state-manager';
+import { resolveEngine, EngineResolution } from './engine-router';
+import { CopilotHandler } from './copilot-handler';
 
 /**
  * Maps Unicode emoji characters to Slack reaction shortcode names.
@@ -49,6 +53,29 @@ export function emojiToShortcode(emoji: string): string {
   return '';
 }
 
+/**
+ * Parse an engine command from a Slack message.
+ * Returns the verb if message starts with 'command:' (case-insensitive).
+ * Returns null if the message is not an engine command at all.
+ * Returns 'unknown' if it starts with 'command:' but verb isn't recognized.
+ *
+ * AC9: No fuzzy matching — exact prefix required.
+ */
+export function parseEngineCommand(
+  text: string,
+): 'use-copilot' | 'use-claude' | 'engine?' | 'unknown' | null {
+  const lower = text.toLowerCase().trimStart();
+  if (!lower.startsWith('command:')) return null;
+
+  const colonIdx = text.toLowerCase().indexOf('command:');
+  const verb = text.slice(colonIdx + 'command:'.length).trim().toLowerCase();
+
+  if (verb === 'use copilot') return 'use-copilot';
+  if (verb === 'use claude') return 'use-claude';
+  if (verb === 'engine?') return 'engine?';
+  return 'unknown';
+}
+
 // Channel ID → human-readable name for Grafana labels
 // Loaded at startup from CHANNEL_MAP_PATH (config/channel-map.json)
 const CHANNEL_NAMES: Record<string, string> = config.channelNames;
@@ -84,6 +111,7 @@ export class SlackHandler {
   private currentReactions: Map<string, string> = new Map(); // sessionKey -> current emoji
   private botUserId: string | null = null;
   private imageUploader: ImageUploader | null = null;
+  private copilotHandler: CopilotHandler;
 
   constructor(app: App, claudeHandler: ClaudeHandler, mcpManager: McpManager) {
     this.app = app;
@@ -92,6 +120,7 @@ export class SlackHandler {
     this.workingDirManager = new WorkingDirectoryManager();
     this.fileHandler = new FileHandler();
     this.todoManager = new TodoManager();
+    this.copilotHandler = new CopilotHandler();
   }
 
   private getImageUploader(): ImageUploader {
@@ -202,6 +231,59 @@ export class SlackHandler {
         });
       }
       return;
+    }
+
+    // Handle engine commands (command: use copilot / use claude / engine?)
+    // Inserted before the general working-dir check so we can give a targeted error (AC6).
+    if (text) {
+      const engineCmd = parseEngineCommand(text);
+      if (engineCmd !== null) {
+        const isDMForEngine = channel.startsWith('D');
+        const workDirForEngine = this.workingDirManager.getWorkingDirectory(
+          channel,
+          thread_ts,
+          isDMForEngine ? user : undefined,
+        );
+
+        if (!workDirForEngine) {
+          await say({
+            text: `❌ Working directory required before engine commands can be used. Set one with: \`cwd /path/to/dir\``,
+            thread_ts: thread_ts || ts,
+          });
+          return;
+        }
+
+        const threadKey = thread_ts || ts;
+        const threadId = threadToSessionId(threadKey);
+
+        if (engineCmd === 'use-copilot') {
+          setEngine(threadId, workDirForEngine, 'copilot', 'manual');
+          await say({
+            text: `✅ Switched to GitHub Copilot for this thread.\n\nNote: Copilot has no access to Claude's prior context in this thread. Use \`command: use claude\` to switch back.`,
+            thread_ts: thread_ts || ts,
+          });
+        } else if (engineCmd === 'use-claude') {
+          setEngine(threadId, workDirForEngine, 'claude', 'manual');
+          await say({
+            text: `✅ Switched to Claude for this thread.`,
+            thread_ts: thread_ts || ts,
+          });
+        } else if (engineCmd === 'engine?') {
+          const { engine, setBy } = resolveEngine(threadId, channel, workDirForEngine);
+          const engineLabel = engine === 'copilot' ? 'GitHub Copilot' : 'Claude';
+          await say({
+            text: `🔍 Engine: *${engineLabel}* (${setBy})\nThread UUID: \`${threadId}\``,
+            thread_ts: thread_ts || ts,
+          });
+        } else {
+          // engineCmd === 'unknown'
+          await say({
+            text: `❌ Unknown command. Supported: \`command: use copilot\`, \`command: use claude\`, \`command: engine?\``,
+            thread_ts: thread_ts || ts,
+          });
+        }
+        return;
+      }
     }
 
     // Check if we have a working directory set
