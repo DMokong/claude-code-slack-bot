@@ -11,7 +11,7 @@ import { permissionServer } from './permission-mcp-server';
 import { config } from './config';
 import { withThreadLock } from './thread-lock';
 import { SlackStreamManager } from './slack-streamer';
-import { queryCostHistogram, queryDurationHistogram, queryCounter, errorCounter, inputTokensHistogram, outputTokensHistogram, cacheReadTokensHistogram, cacheCreationTokensHistogram } from './telemetry';
+import { queryCostHistogram, queryDurationHistogram, queryCounter, errorCounter, inputTokensHistogram, outputTokensHistogram, cacheReadTokensHistogram, cacheCreationTokensHistogram, withQuerySpan } from './telemetry';
 import { threadToSessionId } from './session-id';
 import { setEngine, getThreadEntry } from './thread-state-manager';
 import { resolveEngine, EngineResolution } from './engine-router';
@@ -74,6 +74,17 @@ export function parseEngineCommand(
   if (verb === 'use claude') return 'use-claude';
   if (verb === 'engine?') return 'engine?';
   return 'unknown';
+}
+
+function isRateLimitError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes('429') ||
+    msg.includes('overloaded') ||
+    msg.includes('rate limit') ||
+    msg.includes('rate_limit')
+  );
 }
 
 // Channel ID → human-readable name for Grafana labels
@@ -327,6 +338,51 @@ export class SlackHandler {
     }
 
     const threadKey = thread_ts || ts;
+    const threadId = threadToSessionId(threadKey);
+
+    // Capture thread entry BEFORE writing engine state (needed for context-switch detection)
+    const threadEntryBefore = getThreadEntry(threadId, workingDirectory);
+    const { engine, setBy } = resolveEngine(threadId, channel, workingDirectory);
+
+    // Write resolved engine to state so command: engine? reflects current routing
+    setEngine(threadId, workingDirectory, engine, setBy);
+
+    // Route to Copilot if engine is copilot
+    if (engine === 'copilot') {
+      const sessionKey = this.claudeHandler.getSessionKey(user, channel, threadKey);
+      this.originalMessages.set(sessionKey, { channel, ts: threadKey });
+
+      const existingController = this.activeControllers.get(sessionKey);
+      if (existingController) existingController.abort();
+      const abortController = new AbortController();
+      this.activeControllers.set(sessionKey, abortController);
+
+      const finalPromptForCopilot = processedFiles.length > 0
+        ? await this.fileHandler.formatFilePrompt(processedFiles, text || '')
+        : text || '';
+
+      await withQuerySpan(
+        { channel_id: channel, user_id: user, thread_ts, engine: 'copilot' },
+        async () => {
+          await this.sendCopilotResponse(
+            finalPromptForCopilot,
+            threadEntryBefore.claude,
+            threadEntryBefore.engine,
+            channel,
+            thread_ts || ts,
+            say,
+            sessionKey,
+            abortController,
+          );
+          return {};
+        },
+      );
+
+      if (processedFiles.length > 0) {
+        await this.fileHandler.cleanupTempFiles(processedFiles);
+      }
+      return;
+    }
 
     // Serialize messages within the same thread to prevent concurrent session writes
     await withThreadLock(threadKey, async () => {
@@ -373,12 +429,12 @@ export class SlackHandler {
     // Track whether we're inside a thinking/reasoning block (to filter from streaming)
     let insideThinkingBlock = false;
 
-    try {
-      // Prepare the prompt with file attachments
-      const finalPrompt = processedFiles.length > 0
-        ? await this.fileHandler.formatFilePrompt(processedFiles, text || '')
-        : text || '';
+    // Prepare the prompt with file attachments (defined before try so catch can reference it for fallback)
+    const finalPrompt = processedFiles.length > 0
+      ? await this.fileHandler.formatFilePrompt(processedFiles, text || '')
+      : text || '';
 
+    try {
       this.logger.info('Sending query to Claude Code SDK', {
         prompt: finalPrompt.substring(0, 200) + (finalPrompt.length > 200 ? '...' : ''),
         sessionId: session.sessionId,
@@ -636,7 +692,27 @@ export class SlackHandler {
       // Clear thread status on error
       await this.setThreadStatus(channel, thread_ts || ts, '');
 
-      if (error.name !== 'AbortError') {
+      if (abortController.signal.aborted || error.name === 'AbortError') {
+        this.logger.debug('Request was aborted', { sessionKey });
+
+        // Update reaction to show cancellation
+        await this.updateMessageReaction(sessionKey, '⏹️');
+      } else if (isRateLimitError(error)) {
+        // R1: Auto-fallback to Copilot on rate limit
+        this.logger.warn('Claude rate limit — falling back to Copilot', { error: error.message });
+        setEngine(threadId, workingDirectory, 'copilot', 'auto-fallback');
+        const fallbackController = new AbortController();
+        await this.sendCopilotResponse(
+          finalPrompt,
+          threadEntryBefore.claude,
+          'claude',                   // prior engine was claude
+          channel,
+          thread_ts || ts,
+          say,
+          sessionKey,
+          fallbackController,
+        );
+      } else {
         this.logger.error('Error handling message', error);
 
         // Update reaction to show error
@@ -646,11 +722,6 @@ export class SlackHandler {
           text: `Error: ${error.message || 'Something went wrong'}`,
           thread_ts: thread_ts || ts,
         });
-      } else {
-        this.logger.debug('Request was aborted', { sessionKey });
-
-        // Update reaction to show cancellation
-        await this.updateMessageReaction(sessionKey, '⏹️');
       }
 
       // Clean up temporary files in case of error too
@@ -672,6 +743,43 @@ export class SlackHandler {
       }
     }
     }); // end withThreadLock
+  }
+
+  private async sendCopilotResponse(
+    prompt: string,
+    priorClaudeSessionId: string | null,
+    priorEngine: import('./types').EngineMode,
+    channel: string,
+    replyTs: string,
+    say: any,
+    sessionKey: string,
+    abortController: AbortController,
+  ): Promise<void> {
+    let responseText: string;
+    try {
+      await this.updateMessageReaction(sessionKey, '🤔');
+      responseText = await this.copilotHandler.query(prompt, abortController);
+    } catch (err: any) {
+      this.logger.error('Copilot query failed', err);
+      await this.updateMessageReaction(sessionKey, '❌');
+      await say({
+        text: `❌ Copilot error: ${err.message || 'Unknown error'}`,
+        thread_ts: replyTs,
+      });
+      return;
+    }
+
+    // Context-switch warning (AC7): prior Claude history AND previous engine was Claude
+    const isContextSwitch = priorEngine === 'claude' && priorClaudeSessionId !== null;
+    if (isContextSwitch) {
+      responseText = `⚠️ Switched to GitHub Copilot — Claude's prior context in this thread is not available here\n\n${responseText}`;
+    }
+
+    // Always add attribution footer (R6)
+    responseText += '\n\n_⚡ via GitHub Copilot_';
+
+    await say({ text: responseText, thread_ts: replyTs });
+    await this.updateMessageReaction(sessionKey, '✅');
   }
 
   /**
