@@ -1,11 +1,12 @@
 import { query, type SDKMessage } from '@anthropic-ai/claude-code';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { ConversationSession } from './types';
 import { Logger } from './logger';
 import { McpManager, McpServerConfig } from './mcp-manager';
 import { threadToSessionId } from './session-id';
+import { getClaudeSessionId, setClaudeSessionId } from './thread-state-manager';
 
 export class ClaudeHandler {
   private sessions: Map<string, ConversationSession> = new Map();
@@ -51,54 +52,13 @@ export class ClaudeHandler {
   }
 
   /**
-   * Path to the thread→session mapping file.
-   * Maps deterministic thread UUIDs to SDK-assigned session IDs.
-   * The SDK ignores `options.sessionId`, generating its own UUIDs,
-   * so we persist this mapping for resume across bot restarts.
-   */
-  private getMappingPath(cwd: string): string {
-    return join(this.getProjectDir(cwd), 'thread-session-map.json');
-  }
-
-  /**
-   * Load the thread→session mapping from disk.
-   */
-  private loadSessionMap(cwd: string): Record<string, string> {
-    const path = this.getMappingPath(cwd);
-    try {
-      return JSON.parse(readFileSync(path, 'utf-8'));
-    } catch {
-      return {};
-    }
-  }
-
-  /**
-   * Save a thread→session mapping entry to disk.
-   */
-  private saveSessionMapping(cwd: string, threadSessionId: string, sdkSessionId: string): void {
-    const path = this.getMappingPath(cwd);
-    const map = this.loadSessionMap(cwd);
-    map[threadSessionId] = sdkSessionId;
-    try {
-      mkdirSync(join(path, '..'), { recursive: true });
-      writeFileSync(path, JSON.stringify(map, null, 2));
-      this.logger.debug('Saved session mapping', { threadSessionId, sdkSessionId });
-    } catch (error) {
-      this.logger.warn('Failed to save session mapping', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  /**
    * Resolve a deterministic thread session ID to the actual SDK session ID,
    * checking the mapping file and verifying the session file exists on disk.
    * Returns the SDK session ID if found, undefined otherwise.
    */
   private resolveSessionId(threadSessionId: string, cwd: string): string | undefined {
     // Check mapping file for the real SDK session ID
-    const map = this.loadSessionMap(cwd);
-    const sdkSessionId = map[threadSessionId];
+    const sdkSessionId = getClaudeSessionId(threadSessionId, cwd);
     if (sdkSessionId) {
       const sessionPath = join(this.getProjectDir(cwd), `${sdkSessionId}.jsonl`);
       if (existsSync(sessionPath)) {
@@ -212,7 +172,7 @@ export class ClaudeHandler {
 
           // Persist mapping from deterministic thread ID → SDK session ID
           if (threadSessionId && sdkSessionId !== threadSessionId && options.cwd) {
-            this.saveSessionMapping(options.cwd, threadSessionId, sdkSessionId);
+            setClaudeSessionId(threadSessionId, options.cwd, sdkSessionId);
           }
 
           this.logger.info('Session initialized', {
