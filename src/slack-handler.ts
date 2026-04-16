@@ -344,8 +344,12 @@ export class SlackHandler {
     const threadEntryBefore = getThreadEntry(threadId, workingDirectory);
     const { engine, setBy } = resolveEngine(threadId, channel, workingDirectory);
 
-    // Write resolved engine to state so command: engine? reflects current routing
-    setEngine(threadId, workingDirectory, engine, setBy);
+    // Only persist explicit user-set or auto-fallback engine choices.
+    // Global/channel defaults are dynamic — persisting them would freeze the
+    // resolution hierarchy and prevent channel-engine.json changes from taking effect.
+    if (setBy === 'manual' || setBy === 'auto-fallback') {
+      setEngine(threadId, workingDirectory, engine, setBy);
+    }
 
     // Route to Copilot if engine is copilot
     if (engine === 'copilot') {

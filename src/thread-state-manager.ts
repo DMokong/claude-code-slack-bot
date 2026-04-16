@@ -134,8 +134,10 @@ export function loadState(cwd: string): ThreadStateMap {
  */
 export function saveState(cwd: string, state: ThreadStateMap): void {
   const statePath = getStatePath(cwd);
+  const tmpPath = statePath + '.tmp';
   mkdirSync(dirname(statePath), { recursive: true });
-  writeFileSync(statePath, JSON.stringify(state, null, 2));
+  writeFileSync(tmpPath, JSON.stringify(state, null, 2));
+  renameSync(tmpPath, statePath);
   logger.debug('Saved thread state', { statePath, threadCount: Object.keys(state).length });
 }
 
