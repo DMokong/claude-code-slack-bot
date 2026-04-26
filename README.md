@@ -63,15 +63,18 @@ Thread-specific > Channel default > DEFAULT_WORKING_DIRECTORY
 ```
 src/
 ├── index.ts                 # Entry point
-├── config.ts                # Environment config
+├── config.ts                # Environment config + channel file routes
 ├── slack-handler.ts         # Event handling, streaming, tool filtering
+├── slack-streamer.ts        # Native Slack streaming (chat.startStream API)
 ├── claude-handler.ts        # Claude Code SDK integration
 ├── session-id.ts            # UUID v5 thread→session mapping
 ├── thread-lock.ts           # Per-thread mutex
 ├── image-uploader.ts        # Image detection + Slack upload
+├── image-handler.ts         # Image processing utilities
 ├── working-directory-manager.ts
-├── file-handler.ts          # Uploaded file processing
+├── file-handler.ts          # Uploaded file processing + channel routing
 ├── mcp-manager.ts           # MCP server lifecycle
+├── permission-mcp-server.ts # Permission prompt MCP server
 ├── todo-manager.ts          # Task list rendering
 ├── logger.ts                # Structured logging
 └── types.ts
@@ -130,6 +133,11 @@ SLACK_SIGNING_SECRET=...
 # Optional but recommended
 BASE_DIRECTORY=/Users/you/projects/
 DEFAULT_WORKING_DIRECTORY=your-main-project
+
+# Channel file routing (optional)
+# Maps Slack channel IDs to local directories.
+# Files uploaded in a mapped channel are saved to that directory instead of temp.
+CHANNEL_FILE_ROUTES={"C0ABC123":"/path/to/save/files","C0DEF456":"/another/path"}
 ```
 
 ### 4. Configure MCP Servers (Optional)
@@ -157,6 +165,28 @@ Add any MCP servers you want available to Claude during Slack sessions. Example:
 npm run dev     # Development (hot reload via tsx watch)
 npm run build && npm run prod   # Production
 ```
+
+### Logging
+
+The bot's logger writes every line both to the console and to `slack-bot-YYYY-MM-DD.log` in the log directory. The date is recomputed per write, so a long-lived process rotates automatically across midnight — a stale instance left running for days will keep writing to *today's* file, making the duplicate-bot case easy to spot.
+
+```
+SLACK_BOT_LOG_DIR=/path   # Override log directory (default: ~/projects/claudeclaw/logs)
+SLACK_BOT_LOG_DIR=off     # Disable file logging (console only — useful in tests)
+```
+
+### Single-Instance Enforcement
+
+The bot refuses to start if another bot process is already running on the same machine. Two bots on the same Slack token split-brain events between them and corrupt `config/thread-state.json` (which file maps Slack threads → Claude session IDs).
+
+On startup, `ensureSingleInstance()` runs `ps -axo pid=,command=` against a pattern that matches every shape the bot can run as (prod `dist/index.js`, dev `tsx watch src/index.ts`, npm-spawned tsx parent), excludes the current process's own ancestry, and throws if any other instance is found.
+
+```
+SLACK_BOT_FORCE_TAKEOVER=1   # SIGTERM the prior instance and take over
+SLACK_BOT_LOCK_DIR=/path     # Override lock-file location (default: ~/projects/claudeclaw/config/)
+```
+
+The lock file at `<lock-dir>/slack-bot.lock` contains the running bot's PID and is removed on graceful shutdown.
 
 ## Usage
 
