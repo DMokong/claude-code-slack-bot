@@ -128,6 +128,11 @@ export function findOtherInstances(
 			return { pid, cmd } as RunningInstance;
 		})
 		.filter((p): p is RunningInstance => p !== null)
+		// Require the process to actually be a node/tsx invocation (or a
+		// node-like binary). This filters out shells that happen to mention
+		// the entrypoint as a string in their command line — common when
+		// the user runs `zsh -c "npx tsx src/index.ts"` from a terminal.
+		.filter((p) => /(?:^|\/)(?:node|tsx|bun|deno)(?:\s|$)/.test(p.cmd))
 		.filter((p) => pattern.test(p.cmd))
 		.filter((p) => !ours.has(p.pid));
 
