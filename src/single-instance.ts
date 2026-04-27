@@ -17,27 +17,67 @@ function getLockPath(): string {
 }
 
 /**
- * Default pattern that matches every shape the bot can run as:
- *   - `node .../claude-code-slack-bot/dist/index.js`    (prod)
+ * Default argv pattern. Matches the entrypoint substring; intentionally broad
+ * so it catches every shape the bot can run as:
+ *   - `node .../claude-code-slack-bot/dist/index.js`    (prod, npm)
+ *   - `node dist/index.js`                              (prod, launchd — argv has no project path)
  *   - `node .../tsx/dist/loader.mjs ... src/index.ts`   (dev / npm start)
  *   - `node .../node_modules/.bin/tsx watch src/index.ts` (npm run dev parent)
  *
- * All three command lines contain the project directory and end with an
- * `index` reference, so we anchor on the project path plus the entrypoint.
+ * False-positives (other unrelated `dist/index.js` projects) are filtered
+ * out by DEFAULT_CWD_FILTER below.
  */
-const DEFAULT_PATTERN = /claude-code-slack-bot\/.*(dist\/index\.js|src\/index\.ts)/;
+const DEFAULT_PATTERN = /(?:^|[ /])(?:dist\/index\.js|src\/index\.ts)(?:\s|$)|tsx watch src\/index\.ts|tsx\/dist\/loader\.mjs/;
+
+/**
+ * Default cwd filter. A candidate process must have `claude-code-slack-bot`
+ * somewhere in its working directory to count as a bot. This is what
+ * disambiguates the launchd-mode `node dist/index.js` (no project path in
+ * argv) from any other project's `node dist/index.js`.
+ */
+const DEFAULT_CWD_FILTER = 'claude-code-slack-bot';
 
 export interface RunningInstance {
 	pid: number;
 	cmd: string;
+	cwd?: string;
 }
 
-/** Returns the chain of PIDs from `pid` up to init (PID 1). */
-function getAncestry(pid: number): Set<number> {
+/** Returns the cwd of `pid` via lsof, or null if unavailable. */
+function getCwd(pid: number): string | null {
+	try {
+		// `lsof -a -p PID -d cwd -Fn` outputs lines starting with 'p<pid>' and 'n<path>'.
+		const out = execSync(`/usr/sbin/lsof -a -p ${pid} -d cwd -Fn 2>/dev/null`, {
+			encoding: 'utf-8',
+			timeout: 2000,
+		});
+		const m = out.match(/^n(.+)$/m);
+		return m ? m[1] : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Returns the immediate ancestry of `pid` — self, parent, grandparent,
+ * great-grandparent. Capped at depth 4 because the legitimate "do not
+ * flag this as another instance" chain is at most:
+ *
+ *     us  ←  tsx  ←  npm  ←  shell
+ *
+ * Walking all the way to init causes false-negatives when this code runs
+ * inside a subprocess of the supervised bot itself (e.g. a `claude`
+ * subprocess spawned by the bot to handle a Slack message). In that
+ * scenario, the bot would be many ancestors up — but we WANT to flag it
+ * as another instance, so it must NOT end up in the exclusion set.
+ */
+function getAncestry(pid: number, depth = 3): Set<number> {
 	const ancestry = new Set<number>();
 	let current = pid;
-	while (current > 1 && !ancestry.has(current)) {
+	let remaining = depth;
+	while (current > 1 && remaining > 0 && !ancestry.has(current)) {
 		ancestry.add(current);
+		remaining--;
 		try {
 			const out = execSync(`ps -o ppid= -p ${current}`, { encoding: 'utf-8' }).trim();
 			const ppid = parseInt(out, 10);
@@ -52,13 +92,19 @@ function getAncestry(pid: number): Set<number> {
 
 /**
  * Returns the list of *other* slack-bot processes — anything that matches
- * the bot's command pattern but is not in our own process ancestry (so a
- * `tsx watch` parent of ours is not flagged as "another instance").
+ * the bot's argv pattern AND has `cwdContains` in its working directory,
+ * minus this process's own ancestry (so a `tsx watch` parent of ours is
+ * not flagged as "another instance").
  *
  * Uses `ps -axo pid=,command=` because `pgrep -a` is GNU-only and doesn't
- * exist on macOS.
+ * exist on macOS. Uses `lsof -d cwd` to read each candidate's cwd.
+ *
+ * Pass `cwdContains: null` to skip the cwd filter (used by tests).
  */
-export function findOtherInstances(pattern: RegExp = DEFAULT_PATTERN): RunningInstance[] {
+export function findOtherInstances(
+	pattern: RegExp = DEFAULT_PATTERN,
+	cwdContains: string | null = DEFAULT_CWD_FILTER,
+): RunningInstance[] {
 	let out: string;
 	try {
 		out = execSync(`ps -axo pid=,command=`, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 });
@@ -69,7 +115,7 @@ export function findOtherInstances(pattern: RegExp = DEFAULT_PATTERN): RunningIn
 
 	const ours = getAncestry(process.pid);
 
-	return out
+	const argvMatches: RunningInstance[] = out
 		.split('\n')
 		.map((line) => line.trimStart())
 		.filter(Boolean)
@@ -84,6 +130,12 @@ export function findOtherInstances(pattern: RegExp = DEFAULT_PATTERN): RunningIn
 		.filter((p): p is RunningInstance => p !== null)
 		.filter((p) => pattern.test(p.cmd))
 		.filter((p) => !ours.has(p.pid));
+
+	if (cwdContains === null) return argvMatches;
+
+	return argvMatches
+		.map((p) => ({ ...p, cwd: getCwd(p.pid) ?? undefined }))
+		.filter((p) => p.cwd !== undefined && p.cwd.includes(cwdContains));
 }
 
 /** Best-effort SIGTERM, then SIGKILL after a short wait. */
@@ -150,8 +202,13 @@ export const DUPLICATE_INSTANCE_ERROR = 'DuplicateInstanceError';
 export interface EnsureOptions {
 	/** If true, kill any other instances instead of refusing to start. */
 	force?: boolean;
-	/** Override the pattern used to identify bot processes (testing only). */
+	/** Override the argv pattern used to identify bot processes (testing only). */
 	pattern?: RegExp;
+	/**
+	 * Substring that a candidate process's cwd must contain. Defaults to
+	 * `claude-code-slack-bot`. Pass `null` to skip the cwd filter (testing).
+	 */
+	cwdContains?: string | null;
 }
 
 /**
@@ -165,10 +222,13 @@ export interface EnsureOptions {
  */
 export function ensureSingleInstance(options: EnsureOptions = {}): void {
 	const force = options.force ?? process.env.SLACK_BOT_FORCE_TAKEOVER === '1';
-	const others = findOtherInstances(options.pattern);
+	const cwdFilter = options.cwdContains === undefined ? DEFAULT_CWD_FILTER : options.cwdContains;
+	const others = findOtherInstances(options.pattern, cwdFilter);
 
 	if (others.length > 0) {
-		const list = others.map((o) => `  PID ${o.pid}: ${o.cmd}`).join('\n');
+		const list = others
+			.map((o) => `  PID ${o.pid}: ${o.cmd}${o.cwd ? `  (cwd: ${o.cwd})` : ''}`)
+			.join('\n');
 
 		if (!force) {
 			const err = new Error(

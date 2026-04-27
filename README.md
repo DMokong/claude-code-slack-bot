@@ -166,6 +166,81 @@ npm run dev     # Development (hot reload via tsx watch)
 npm run build && npm run prod   # Production
 ```
 
+## Operational Modes
+
+There are two ways to run the bot. Pick one — the single-instance check (below) prevents you from accidentally running both at once.
+
+### Mode A — Dev (`tsx watch`)
+
+```bash
+~/projects/claudeclaw/scripts/start-slack-bot.sh start          # start
+~/projects/claudeclaw/scripts/start-slack-bot.sh status         # check
+~/projects/claudeclaw/scripts/start-slack-bot.sh restart        # restart
+~/projects/claudeclaw/scripts/start-slack-bot.sh stop           # stop
+~/projects/claudeclaw/scripts/start-slack-bot.sh tail           # follow today's log
+~/projects/claudeclaw/scripts/start-slack-bot.sh logs [N]       # last N lines
+```
+
+- **Hot reload** — `tsx watch` re-execs the bot whenever `src/*.ts` changes. Save → ~1s → bot is back with the new code.
+- Runs source directly. No build step.
+- Dies if you close the terminal that started it (it backgrounds via `nohup` so usually OK), if you reboot, or if you `stop`.
+- Best for: actively iterating on bot code.
+
+### Mode B — Launchd (supervised)
+
+```bash
+~/projects/claudeclaw/scripts/slack-bot-launchd-install.sh install   # install + start
+~/projects/claudeclaw/scripts/slack-bot-launchd-install.sh status    # check
+~/projects/claudeclaw/scripts/slack-bot-launchd-install.sh stop      # bootout (plist stays)
+~/projects/claudeclaw/scripts/slack-bot-launchd-install.sh install   # to bounce / pick up changes
+```
+
+- **Supervised by macOS launchd**. Survives reboots. `KeepAlive=Crashed` auto-relaunches on crash with a 30s throttle. `ProcessType=Interactive` prevents App Nap so Slack stays responsive.
+- Runs compiled `dist/index.js`. NOT auto-reloaded. To pick up new code, see *"Updating the launchd-supervised bot"* below.
+- Won't crash-loop on operator error: when the single-instance check fires (exit 42), the wrapper translates it to clean exit 0 and launchd leaves it alone.
+- Best for: "Cindy is always there" — production posture.
+
+### When to use which
+
+| Use case | Mode |
+|---|---|
+| Editing `src/*.ts` and want changes immediately | **Dev** (hot reload) |
+| Want the bot to survive your laptop sleeping/rebooting | **Launchd** |
+| Iterating on slack-handler / claude-handler logic | **Dev** |
+| Day-to-day "is Cindy reachable in Slack" | **Launchd** |
+| Stress-testing the supervisor / KeepAlive behaviour | **Launchd** |
+
+### Updating the launchd-supervised bot
+
+The launchd bot runs `node dist/index.js` from the *built* output. To pick up new code:
+
+```bash
+# One-liner: bootout, re-symlink plist, bootstrap. The wrapper auto-rebuilds
+# dist/ on startup if src/ is newer than dist/.
+~/projects/claudeclaw/scripts/slack-bot-launchd-install.sh install
+```
+
+Or, if you want the build to run *before* the bounce (so you see compile errors immediately):
+
+```bash
+cd ~/projects/claude-code-slack-bot && npm run build
+~/projects/claudeclaw/scripts/slack-bot-launchd-install.sh install
+```
+
+| You changed… | Dev bot | Launchd bot |
+|---|---|---|
+| `src/*.ts` | auto-restart, ~1s | reinstall (auto-rebuilds dist) |
+| `mcp-servers.json` / `.env` / `.env.otel` | restart bot | reinstall |
+| `config/launchd/com.claudeclaw.slack-bot.plist` | n/a | reinstall (re-bootstrap reads new plist) |
+| `scripts/launchd-slack-bot.sh` | n/a | reinstall |
+
+The launchd-side wrapper (`scripts/launchd-slack-bot.sh`) silently swallows build failures so a stray TypeScript typo can't take the bot offline indefinitely. If you suspect a stale build:
+
+```bash
+tail -20 ~/projects/claudeclaw/logs/slack-bot-launchd.log    # check for "build failed"
+cd ~/projects/claude-code-slack-bot && npm run build          # see the actual error
+```
+
 ### Logging
 
 The bot's logger writes every line both to the console and to `slack-bot-YYYY-MM-DD.log` in the log directory. The date is recomputed per write, so a long-lived process rotates automatically across midnight — a stale instance left running for days will keep writing to *today's* file, making the duplicate-bot case easy to spot.
@@ -175,18 +250,39 @@ SLACK_BOT_LOG_DIR=/path   # Override log directory (default: ~/projects/claudecl
 SLACK_BOT_LOG_DIR=off     # Disable file logging (console only — useful in tests)
 ```
 
+**Three log files exist; one is the canonical operational log:**
+
+| File | What's in it | When to read |
+|---|---|---|
+| `slack-bot-YYYY-MM-DD.log` | Bot's own logger output (every INFO/WARN/ERROR via `Logger`). Rotates daily at midnight, automatically, regardless of how the bot was launched. | **Default — read this 99% of the time.** |
+| `slack-bot-launcher.log` | Wrapper output from `start-slack-bot.sh` (OTel init, `npm start`, build output in `--prod`). Single file, not rotated. | When dev bot fails to *start* and nothing shows up in the dated log. |
+| `slack-bot-launchd.log` | launchd-side stdout/stderr — pre-init crashes, things that escape Node, the wrapper's own echoes. Single file. | Only relevant in launchd mode, only when something is very wrong. |
+
+The dev-mode `start-slack-bot.sh` has `tail` and `logs [N]` subcommands that target the dated file. From any mode you can also just:
+
+```bash
+tail -f ~/projects/claudeclaw/logs/slack-bot-$(date +%Y-%m-%d).log
+```
+
+`tail` follows the file live (Ctrl-C to stop); `logs N` prints the last N lines and exits.
+
 ### Single-Instance Enforcement
 
-The bot refuses to start if another bot process is already running on the same machine. Two bots on the same Slack token split-brain events between them and corrupt `config/thread-state.json` (which file maps Slack threads → Claude session IDs).
+The bot refuses to start if another bot process is already running on the same machine. Two bots on the same Slack token split-brain events between them and corrupt `config/thread-state.json` (which maps Slack threads → Claude session IDs).
 
-On startup, `ensureSingleInstance()` runs `ps -axo pid=,command=` against a pattern that matches every shape the bot can run as (prod `dist/index.js`, dev `tsx watch src/index.ts`, npm-spawned tsx parent), excludes the current process's own ancestry, and throws if any other instance is found.
+On startup, `ensureSingleInstance()`:
+
+1. Runs `ps -axo pid=,command=` and filters by an argv pattern that catches every shape the bot can run as: prod `node dist/index.js` (no project path), dev `node ... src/index.ts`, `tsx watch`, npm wrappers.
+2. For each match, reads the process's working directory via `lsof -d cwd` and keeps only those whose cwd contains `claude-code-slack-bot`. This is what disambiguates the launchd-mode bare `node dist/index.js` from any other project's `node dist/index.js`.
+3. Excludes the current process's *immediate* ancestry (depth 3 — covers `npm → tsx → node` legitimately, but does NOT walk all the way to init, which would falsely swallow the bot itself when this code runs inside a subprocess of the bot — e.g. a `claude` subprocess spawned to handle a Slack message).
+4. If any matches remain, throws `DuplicateInstanceError` and exits 42.
 
 ```
-SLACK_BOT_FORCE_TAKEOVER=1   # SIGTERM the prior instance and take over
+SLACK_BOT_FORCE_TAKEOVER=1   # SIGTERM prior instances and take over
 SLACK_BOT_LOCK_DIR=/path     # Override lock-file location (default: ~/projects/claudeclaw/config/)
 ```
 
-The lock file at `<lock-dir>/slack-bot.lock` contains the running bot's PID and is removed on graceful shutdown.
+The lock file at `<lock-dir>/slack-bot.lock` holds the running bot's PID and is removed on graceful shutdown. **Exit code 42 is special** — the launchd wrapper translates it to a clean exit 0 so the duplicate-instance condition (operator error, not a crash) does not trigger `KeepAlive` crash-loop relaunches.
 
 ## Usage
 

@@ -90,13 +90,13 @@ function waitForExit(child: ChildProcess, timeoutMs = 3000): Promise<boolean> {
 
 describe('findOtherInstances', () => {
 	it('returns empty when no matching processes are running', () => {
-		const others = findOtherInstances(testPattern);
+		const others = findOtherInstances(testPattern, null);
 		expect(others).toEqual([]);
 	});
 
 	it('detects a spawned fake bot process', () => {
 		const fake = spawnFakeBot();
-		const others = findOtherInstances(testPattern);
+		const others = findOtherInstances(testPattern, null);
 		const found = others.find((o) => o.pid === fake.pid);
 		expect(found, `expected to find pid ${fake.pid} in: ${JSON.stringify(others)}`).toBeDefined();
 	});
@@ -111,7 +111,7 @@ describe('findOtherInstances', () => {
 
 describe('ensureSingleInstance', () => {
 	it('writes a lock file when no other instances exist', () => {
-		ensureSingleInstance({ pattern: testPattern });
+		ensureSingleInstance({ pattern: testPattern, cwdContains: null });
 		const lockPath = join(testDir, 'slack-bot.lock');
 		expect(existsSync(lockPath)).toBe(true);
 		expect(readFileSync(lockPath, 'utf-8').trim()).toBe(String(process.pid));
@@ -119,7 +119,7 @@ describe('ensureSingleInstance', () => {
 
 	it('throws a clear error when another instance is detected', () => {
 		spawnFakeBot();
-		expect(() => ensureSingleInstance({ pattern: testPattern })).toThrow(
+		expect(() => ensureSingleInstance({ pattern: testPattern, cwdContains: null })).toThrow(
 			/another slack-bot instance is already running/,
 		);
 	});
@@ -127,14 +127,14 @@ describe('ensureSingleInstance', () => {
 	it('terminates the prior instance when force=true', async () => {
 		const fake = spawnFakeBot();
 		expect(isAlive(fake.pid!)).toBe(true);
-		ensureSingleInstance({ force: true, pattern: testPattern });
+		ensureSingleInstance({ force: true, pattern: testPattern, cwdContains: null });
 		expect(await waitForExit(fake)).toBe(true);
 	});
 
 	it('honours SLACK_BOT_FORCE_TAKEOVER=1 env var', async () => {
 		const fake = spawnFakeBot();
 		process.env.SLACK_BOT_FORCE_TAKEOVER = '1';
-		expect(() => ensureSingleInstance({ pattern: testPattern })).not.toThrow();
+		expect(() => ensureSingleInstance({ pattern: testPattern, cwdContains: null })).not.toThrow();
 		expect(await waitForExit(fake)).toBe(true);
 	});
 });
