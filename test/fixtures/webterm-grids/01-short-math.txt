@@ -1,0 +1,83 @@
+__USER_INPUT__
+what is 2 plus 2? answer in one sentence.
+__GRID__
+claude --dangerously-skip-permissions
+[webterm:fixture-capture] dustincheng@Mac claudeclaw % claude --dangerously-skip-permissions
+ ▐▛███▜▌   Claude Code v2.1.156
+▝▜█████▛▘  Opus 4.8 (1M context) with high effort · Claude Max
+  ▘▘ ▝▝    ~/projects/claudeclaw
+
+
+❯ what is 2 plus 2? answer in one sentence.
+
+⏺ 2 plus 2 equals 4.
+
+✻ Cogitated for 9s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Opus 4.8 (1M context) │ █░░░░░░░░░░░░░░░░░░░ 6%%/1000k (21.6k) │ $0.13 │ ⏱ 12s
+   main ● │ ~/projects/claudeclaw │ v2.1.156
+   🧠  ████░░░░░░ 84/200 │ 11 topics (497L) │ ✏ never
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+__SCROLLBACK__
+claude --dangerously-skip-permissions
+[webterm:fixture-capture] dustincheng@Mac claudeclaw % claude --dangerously-skip-permissions
+ ▐▛███▜▌   Claude Code v2.1.156
+▝▜█████▛▘  Opus 4.8 (1M context) with high effort · Claude Max
+  ▘▘ ▝▝    ~/projects/claudeclaw
+
+
+❯ what is 2 plus 2? answer in one sentence.                                                                             
+
+⏺ 2 plus 2 equals 4.
+   
+✻ Cogitated for 9s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯  
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Opus 4.8 (1M context) │ █░░░░░░░░░░░░░░░░░░░ 6%%/1000k (21.6k) │ $0.13 │ ⏱ 12s
+   main ● │ ~/projects/claudeclaw │ v2.1.156
+   🧠  ████░░░░░░ 84/200 │ 11 topics (497L) │ ✏ never
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
