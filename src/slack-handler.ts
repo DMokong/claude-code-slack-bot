@@ -16,6 +16,7 @@ import { threadToSessionId } from './session-id';
 import { setEngine, getThreadEntry } from './thread-state-manager';
 import { resolveEngine, EngineResolution } from './engine-router';
 import { CopilotHandler } from './copilot-handler';
+import { WebtermRuntimeHandler } from './webterm-runtime-handler';
 
 /**
  * Maps Unicode emoji characters to Slack reaction shortcode names.
@@ -123,6 +124,7 @@ export class SlackHandler {
   private botUserId: string | null = null;
   private imageUploader: ImageUploader | null = null;
   private copilotHandler: CopilotHandler;
+  private webtermRuntime: WebtermRuntimeHandler | null = null;
 
   constructor(app: App, claudeHandler: ClaudeHandler, mcpManager: McpManager) {
     this.app = app;
@@ -132,6 +134,26 @@ export class SlackHandler {
     this.fileHandler = new FileHandler();
     this.todoManager = new TodoManager();
     this.copilotHandler = new CopilotHandler();
+    // Webterm-driven runtime — only instantiated if any channel is configured
+    // (claw-op2n Phase 2 demoable). Falls through to the SDK path otherwise.
+    if (config.webterm.channels.length > 0) {
+      this.webtermRuntime = new WebtermRuntimeHandler({
+        webtermUrl: config.webterm.url,
+        cwd: config.webterm.cwd,
+        claudeCmd: config.webterm.claudeCmd,
+      });
+      this.logger.info('Webterm runtime enabled', {
+        channels: config.webterm.channels,
+        url: config.webterm.url,
+      });
+    }
+  }
+
+  /** Best-effort cleanup of webterm sessions on shutdown. */
+  async shutdown(): Promise<void> {
+    if (this.webtermRuntime) {
+      await this.webtermRuntime.shutdown();
+    }
   }
 
   private getImageUploader(): ImageUploader {
@@ -143,7 +165,28 @@ export class SlackHandler {
 
   async handleMessage(event: MessageEvent, say: any) {
     const { user, channel, thread_ts, ts, text, files } = event;
-    
+
+    // Webterm-driven claude runtime path (claw-op2n Phase 2 demoable).
+    // Configured channels short-circuit the SDK path entirely. Files /
+    // permission-prompt UX are out of scope for the demoable; those still
+    // need the SDK path. claw-o05f tracks the permission UX, claw-r56h
+    // built the extractor that this handler depends on.
+    if (
+      this.webtermRuntime &&
+      text &&
+      (!files || files.length === 0) &&
+      config.webterm.channels.includes(channel)
+    ) {
+      this.logger.debug('Routing to webterm runtime', { channel, thread_ts: thread_ts || ts });
+      await this.webtermRuntime.handleMessage({
+        channelId: channel,
+        threadTs: thread_ts || ts,
+        text,
+        slack: this.app.client,
+      });
+      return;
+    }
+
     // Process any attached files
     let processedFiles: ProcessedFile[] = [];
     const channelFileRoute = config.channelFileRoutes[channel];

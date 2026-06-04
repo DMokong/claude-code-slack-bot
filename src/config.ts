@@ -41,6 +41,7 @@ export const config = {
   claude: {
     useBedrock: process.env.CLAUDE_CODE_USE_BEDROCK === '1',
     useVertex: process.env.CLAUDE_CODE_USE_VERTEX === '1',
+    model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
   },
   streaming: {
     mode: (process.env.SLACK_STREAMING_MODE || 'native') as 'native' | 'legacy' | 'off',
@@ -51,6 +52,20 @@ export const config = {
   baseDirectory: process.env.BASE_DIRECTORY || '',
   defaultWorkingDirectory: process.env.DEFAULT_WORKING_DIRECTORY || '',
   debug: process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development',
+  // Webterm-driven claude runtime (claw-op2n Phase 2 demoable integration).
+  // Set WEBTERM_CHANNELS=C0XXX,C0YYY to route specific Slack channels through
+  // a persistent interactive `claude` process hosted in webterm instead of
+  // the `claude -p` SDK path. Empty list (default) = no channels routed,
+  // existing behavior unchanged.
+  webterm: {
+    channels: (process.env.WEBTERM_CHANNELS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0),
+    url: process.env.WEBTERM_URL || 'http://127.0.0.1:7681',
+    cwd: process.env.WEBTERM_CWD || `${process.env.HOME}/projects/claudeclaw`,
+    claudeCmd: process.env.WEBTERM_CLAUDE_CMD || 'claude --dangerously-skip-permissions',
+  },
 };
 
 export function validateConfig() {

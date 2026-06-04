@@ -1,0 +1,323 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { WebtermRuntimeHandler } from "./webterm-runtime-handler";
+
+// Mock webterm: records HTTP calls and lets the test drive SSE events
+// through a writable readable-stream pump.
+
+function makeMockWebterm() {
+  let nextSessionId = 1;
+  const sessions = new Map<string, {
+    sseController: ReadableStreamDefaultController<Uint8Array> | null;
+    inputs: { kind: string; data?: string; keys?: string[] }[];
+    text: string;
+  }>();
+  const calls: { method: string; url: string; body?: any }[] = [];
+
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : (input as URL).toString();
+    const method = (init?.method ?? "GET").toUpperCase();
+    const bodyText = typeof init?.body === "string" ? init.body : undefined;
+    const body = bodyText ? JSON.parse(bodyText) : undefined;
+    calls.push({ method, url, body });
+
+    if (method === "POST" && url.endsWith("/api/sessions")) {
+      const id = `sess-${nextSessionId++}`;
+      sessions.set(id, { sseController: null, inputs: [], text: "" });
+      return new Response(JSON.stringify({ id }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    const mEvents = url.match(/\/api\/sessions\/([^\/?]+)\/events/);
+    if (method === "GET" && mEvents) {
+      const id = mEvents[1];
+      const s = sessions.get(id);
+      if (!s) return new Response("not found", { status: 404 });
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) { s.sseController = controller; },
+        cancel() { s.sseController = null; },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+    const mInput = url.match(/\/api\/sessions\/([^\/?]+)\/input/);
+    if (method === "POST" && mInput) {
+      const id = mInput[1];
+      const s = sessions.get(id);
+      if (!s) return new Response("not found", { status: 404 });
+      s.inputs.push(body);
+      return new Response(null, { status: 204 });
+    }
+    const mText = url.match(/\/api\/sessions\/([^\/?]+)\/text/);
+    if (method === "GET" && mText) {
+      const id = mText[1];
+      const s = sessions.get(id);
+      if (!s) return new Response("not found", { status: 404 });
+      return new Response(s.text, { status: 200 });
+    }
+    const mDelete = url.match(/\/api\/sessions\/([^\/?]+)$/);
+    if (method === "DELETE" && mDelete) {
+      const id = mDelete[1];
+      const s = sessions.get(id);
+      if (s?.sseController) s.sseController.close();
+      sessions.delete(id);
+      return new Response(null, { status: 204 });
+    }
+    return new Response("not found", { status: 404 });
+  };
+
+  return {
+    fetchImpl,
+    sessions,
+    calls,
+    emitPromptReady(sessionId: string) {
+      const s = sessions.get(sessionId);
+      if (!s?.sseController) throw new Error(`no SSE controller for ${sessionId}`);
+      const payload = `event: prompt-ready\ndata: {"stableForMs":800,"polls":3}\n\n`;
+      s.sseController.enqueue(new TextEncoder().encode(payload));
+    },
+    emitExit(sessionId: string, code: number) {
+      const s = sessions.get(sessionId);
+      if (!s?.sseController) throw new Error(`no SSE controller for ${sessionId}`);
+      const payload = `event: exit\ndata: {"code":${code}}\n\n`;
+      s.sseController.enqueue(new TextEncoder().encode(payload));
+      s.sseController.close();
+    },
+    setText(sessionId: string, text: string) {
+      const s = sessions.get(sessionId);
+      if (!s) throw new Error(`no session ${sessionId}`);
+      s.text = text;
+    },
+    onlySessionId() {
+      const ids = Array.from(sessions.keys());
+      if (ids.length !== 1) throw new Error(`expected 1 session, got ${ids.length}`);
+      return ids[0];
+    },
+  };
+}
+
+function makeSlack() {
+  const posted: { channel: string; thread_ts?: string; text: string }[] = [];
+  return {
+    posted,
+    client: {
+      chat: {
+        postMessage: vi.fn(async (msg: any) => { posted.push(msg); return { ok: true } as any; }),
+      },
+    } as any,
+  };
+}
+
+function buildBootGrid(): string {
+  // Boot screen: prompt is visible, no user input echoed yet, no ⏺ block.
+  return [
+    "claude --dangerously-skip-permissions",
+    "[webterm:test] user@host claudeclaw % claude --dangerously-skip-permissions",
+    " ▐▛███▜▌   Claude Code v2.1.156",
+    "",
+    "────────────────────────────────────────",
+    "❯",
+    "────────────────────────────────────────",
+    "   Opus 4.8 (1M context) │ ⏱ 0s",
+  ].join("\n");
+}
+
+function buildTurnGrid(userInput: string, assistant: string): string {
+  return [
+    "claude --dangerously-skip-permissions",
+    "[webterm:test] user@host claudeclaw %",
+    "",
+    `❯ ${userInput}`,
+    "",
+    `⏺ ${assistant}`,
+    "",
+    "✻ Cooked for 1s",
+    "",
+    "────────────────────────────────────────",
+    "❯",
+    "────────────────────────────────────────",
+    "   Opus 4.8 (1M context) │ ⏱ 5s",
+  ].join("\n");
+}
+
+describe("WebtermRuntimeHandler", () => {
+  let mock: ReturnType<typeof makeMockWebterm>;
+  let slack: ReturnType<typeof makeSlack>;
+  let handler: WebtermRuntimeHandler;
+
+  beforeEach(() => {
+    mock = makeMockWebterm();
+    slack = makeSlack();
+    handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local",
+      fetchImpl: mock.fetchImpl,
+      cwd: "/tmp/test",
+    });
+  });
+
+  it("creates a session, boots claude, and waits for first prompt-ready before returning", async () => {
+    const req = {
+      channelId: "C1",
+      threadTs: "1234.5",
+      text: "what is 2+2?",
+      slack: slack.client,
+    };
+    // Drive: arrange SSE to fire prompt-ready as soon as the listener subscribes.
+    // We can't predict the session id before the POST happens, so we kick the
+    // handler off and then race the SSE emissions in.
+    const handlePromise = handler.handleMessage(req);
+
+    // Yield until the session is created and SSE is subscribed.
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    // Boot complete: fire prompt-ready
+    mock.emitPromptReady(id);
+    // Wait until the boot completed (inputs[0] should be the claude command).
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 2);
+    // After boot, the handler sends the user's input (text + Enter) — inputs[2]+[3]
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    // Set the grid text for the response and fire prompt-ready
+    mock.setText(id, buildTurnGrid(req.text, "2 plus 2 equals 4."));
+    mock.emitPromptReady(id);
+
+    await handlePromise;
+    expect(slack.posted).toHaveLength(1);
+    expect(slack.posted[0].channel).toBe("C1");
+    expect(slack.posted[0].thread_ts).toBe("1234.5");
+    expect(slack.posted[0].text).toContain("2 plus 2 equals 4.");
+  });
+
+  it("reuses a session for the same channel + thread on a second message", async () => {
+    const req1 = { channelId: "C1", threadTs: "T1", text: "first", slack: slack.client };
+    const req2 = { channelId: "C1", threadTs: "T1", text: "second", slack: slack.client };
+
+    // First turn — boot + reply
+    const p1 = handler.handleMessage(req1);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);  // boot done
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);  // claude\n + user\n
+    mock.setText(id, buildTurnGrid("first", "ok one"));
+    mock.emitPromptReady(id);
+    await p1;
+
+    // Second turn — same session, no new POST /api/sessions
+    const callsBefore = mock.calls.filter((c) => c.method === "POST" && c.url.endsWith("/api/sessions")).length;
+    const p2 = handler.handleMessage(req2);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 6);  // user2\n
+    mock.setText(id, buildTurnGrid("second", "ok two"));
+    mock.emitPromptReady(id);
+    await p2;
+    const callsAfter = mock.calls.filter((c) => c.method === "POST" && c.url.endsWith("/api/sessions")).length;
+
+    expect(callsAfter).toBe(callsBefore);  // no new session POST
+    expect(slack.posted).toHaveLength(2);
+    expect(slack.posted[1].text).toContain("ok two");
+  });
+
+  it("creates separate sessions for different threads in the same channel", async () => {
+    const reqA = { channelId: "C1", threadTs: "TA", text: "hi from A", slack: slack.client };
+    const reqB = { channelId: "C1", threadTs: "TB", text: "hi from B", slack: slack.client };
+
+    const pA = handler.handleMessage(reqA);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const idA = mock.onlySessionId();
+    mock.emitPromptReady(idA);
+    await waitFor(() => mock.sessions.get(idA)!.inputs.length >= 4);
+    mock.setText(idA, buildTurnGrid("hi from A", "A says hi"));
+    mock.emitPromptReady(idA);
+    await pA;
+
+    const pB = handler.handleMessage(reqB);
+    await waitFor(() => mock.sessions.size === 2);
+    const idB = [...mock.sessions.keys()].find((k) => k !== idA)!;
+    await waitFor(() => mock.sessions.get(idB)!.sseController !== null);
+    mock.emitPromptReady(idB);
+    await waitFor(() => mock.sessions.get(idB)!.inputs.length >= 4);
+    mock.setText(idB, buildTurnGrid("hi from B", "B says hi"));
+    mock.emitPromptReady(idB);
+    await pB;
+
+    expect(handler._sessionCount()).toBe(2);
+    expect(slack.posted[0].text).toContain("A says hi");
+    expect(slack.posted[1].text).toContain("B says hi");
+  });
+
+  it("retries when the extractor returns null on a premature prompt-ready (claw-etj7)", async () => {
+    const req = { channelId: "C1", threadTs: "T1", text: "what gives?", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);  // boot
+
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    // First prompt-ready: claude hasn't responded yet — grid has user echo
+    // but no ⏺ block. Extractor will return null; handler should retry.
+    mock.setText(id, [
+      "❯ what gives?",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+    ].join("\n"));
+    mock.emitPromptReady(id);
+    await sleep(20);
+    expect(slack.posted).toHaveLength(0);
+
+    // Second prompt-ready: claude has now responded. Extractor returns content.
+    mock.setText(id, buildTurnGrid("what gives?", "Eventually, the answer is 4."));
+    mock.emitPromptReady(id);
+    await p;
+    expect(slack.posted).toHaveLength(1);
+    expect(slack.posted[0].text).toContain("the answer is 4");
+  });
+
+  it("posts a warning to Slack when session creation fails", async () => {
+    const flaky: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (init?.method === "POST" && url.endsWith("/api/sessions")) {
+        return new Response("server gone", { status: 500 });
+      }
+      return mock.fetchImpl(input as any, init);
+    };
+    handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local",
+      fetchImpl: flaky,
+      cwd: "/tmp/test",
+    });
+    const req = { channelId: "C1", threadTs: "T1", text: "hello", slack: slack.client };
+    await handler.handleMessage(req);
+    expect(slack.posted).toHaveLength(1);
+    expect(slack.posted[0].text).toMatch(/webterm session creation failed/);
+  });
+
+  it("shutdown() aborts SSE listeners and kills all sessions", async () => {
+    const req = { channelId: "C1", threadTs: "T1", text: "hi", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);  // boot
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    mock.setText(id, buildTurnGrid("hi", "hello back"));
+    mock.emitPromptReady(id);
+    await p;
+
+    expect(handler._sessionCount()).toBe(1);
+    await handler.shutdown();
+    expect(handler._sessionCount()).toBe(0);
+    expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes(id))).toBeTruthy();
+  });
+});
+
+async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await sleep(10);
+  }
+  throw new Error("waitFor timed out");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
