@@ -23,13 +23,23 @@ unchanged until you set `WEBTERM_CHANNELS`.
 
 ## Prerequisites
 
-1. **webterm running** on the configured URL with the `prompt-ready` SSE event:
+1. **webterm running** on the configured URL with the `prompt-ready` SSE event.
+   There are TWO dev servers — the bot only needs the API one, but the browser
+   UI is on a separate port if you want to watch sessions live.
+
    ```bash
+   # terminal A — API server (Fastify on 7681). The bot talks to this.
    cd ~/projects/webterm
    git checkout main             # prompt-ready merged on 2026-06-04
-   pnpm --filter @webterm/server dev
+   pnpm dev:server               # → http://127.0.0.1:7681
+
+   # terminal B (optional) — browser UI (Vite on 5173, proxies /api + /ws to 7681)
+   pnpm dev:client               # → http://127.0.0.1:5173
    ```
-   Verify: `curl -s http://127.0.0.1:7681/api/health` returns `{"ok":true}`.
+
+   Verify the API: `curl -s http://127.0.0.1:7681/api/health` returns
+   `{"ok":true}`. **Don't browse to 7681 directly** — it's API-only and a GET /
+   returns a Fastify 404. The browser UI lives on 5173.
 
 2. **`claude` CLI authenticated** under the user the bot runs as. The default
    command is `claude --dangerously-skip-permissions`, which skips per-tool
@@ -58,6 +68,30 @@ unchanged until you set `WEBTERM_CHANNELS`.
 
 Unset `WEBTERM_CHANNELS` and restart. The runtime instance won't even be
 constructed, so all routing falls through to the SDK path.
+
+## Healthcheck
+
+`scripts/healthcheck-webterm-claude.ts` runs the full pipeline end-to-end
+using the same code path the bot uses for routed channels — API reachable,
+session create, SSE subscribe with `promptReady=true`, boot, send a known
+turn ("what is 2 plus 2?"), fetch grid, run through the production extractor
+and Slack formatter, sanity-check that the answer contains "4". Exit 0 = healthy.
+
+```bash
+cd ~/projects/claude-code-slack-bot
+npx tsx scripts/healthcheck-webterm-claude.ts          # API + claude only
+npx tsx scripts/healthcheck-webterm-claude.ts --ui     # also probe Vite UI on 5173
+```
+
+All thresholds and the prompt itself are overridable via env vars
+(`HEALTHCHECK_PROMPT`, `HEALTHCHECK_EXPECT`, `BOOT_TIMEOUT_MS`,
+`TURN_TIMEOUT_MS`, `WEBTERM_CWD`, etc.) — see the header comment in the
+script. Typical run takes ~6s on a warm laptop.
+
+If a step fails, the script prints the error AND a hint at what to try
+(e.g. "claude might be hitting the trust folder dialog"). Useful before
+activating in a real channel, useful after the fact to debug a turn that
+came back wrong.
 
 ## Observability
 

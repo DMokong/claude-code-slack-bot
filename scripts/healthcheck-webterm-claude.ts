@@ -1,0 +1,335 @@
+#!/usr/bin/env -S npx tsx
+// End-to-end healthcheck for the webterm-driven claude runtime path.
+//
+// Exercises the same chain the bot uses for routed channels:
+//   1. webterm API reachable
+//   2. (optional) webterm UI reachable
+//   3. create webterm session
+//   4. subscribe to SSE with promptReady=true
+//   5. boot `claude` in the configured cwd
+//   6. send a known-answer turn ("what is 2 plus 2?")
+//   7. fetch grid text from /text
+//   8. extract assistant turn via the PRODUCTION extractor
+//   9. format for Slack
+//  10. assert the extracted text contains the expected answer marker
+//  cleanup. kill session.
+//
+// Run from the slack-bot repo root:
+//   npx tsx scripts/healthcheck-webterm-claude.ts
+//   npx tsx scripts/healthcheck-webterm-claude.ts --ui          # also probe Vite UI
+//   WEBTERM_URL=http://other:7681 npx tsx scripts/healthcheck-webterm-claude.ts
+//
+// Exit 0 = healthy, 1 = any step failed.
+
+import { extractTurn, formatTurnForSlack } from "../src/webterm-claude-extractor";
+
+const WEBTERM_URL = process.env.WEBTERM_URL ?? "http://127.0.0.1:7681";
+const WEBTERM_UI_URL = process.env.WEBTERM_UI_URL ?? "http://127.0.0.1:5173";
+const CWD = process.env.WEBTERM_CWD ?? `${process.env.HOME}/projects/claudeclaw`;
+const CLAUDE_CMD = process.env.WEBTERM_CLAUDE_CMD ?? "claude --dangerously-skip-permissions";
+const COLS = Number(process.env.WEBTERM_COLS ?? 120);
+const ROWS = Number(process.env.WEBTERM_ROWS ?? 40);
+const BOOT_TIMEOUT_MS = Number(process.env.BOOT_TIMEOUT_MS ?? 30_000);
+const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS ?? 90_000);
+const HEALTHCHECK_PROMPT = process.env.HEALTHCHECK_PROMPT ?? "what is 2 plus 2? answer in one short sentence.";
+const HEALTHCHECK_EXPECT = process.env.HEALTHCHECK_EXPECT ?? "4";
+
+const includeUiCheck = process.argv.includes("--ui") || process.env.HEALTHCHECK_UI === "1";
+
+// ----- terminal output helpers -----
+
+const isTTY = process.stderr.isTTY;
+const c = {
+  green: (s: string) => isTTY ? `\x1b[32m${s}\x1b[0m` : s,
+  red: (s: string) => isTTY ? `\x1b[31m${s}\x1b[0m` : s,
+  yellow: (s: string) => isTTY ? `\x1b[33m${s}\x1b[0m` : s,
+  dim: (s: string) => isTTY ? `\x1b[2m${s}\x1b[0m` : s,
+  bold: (s: string) => isTTY ? `\x1b[1m${s}\x1b[0m` : s,
+};
+
+interface StepResult {
+  name: string;
+  ok: boolean;
+  elapsedMs: number;
+  detail?: string;
+  error?: string;
+  hint?: string;
+}
+
+const results: StepResult[] = [];
+const overallStart = Date.now();
+let stepIndex = 0;
+const totalSteps = includeUiCheck ? 11 : 10;
+
+async function step<T>(name: string, fn: () => Promise<T>, hint?: string): Promise<T> {
+  stepIndex++;
+  const label = `[${stepIndex}/${totalSteps}] ${name}`;
+  process.stderr.write(`${label} ... `);
+  const t0 = Date.now();
+  try {
+    const value = await fn();
+    const elapsedMs = Date.now() - t0;
+    results.push({ name, ok: true, elapsedMs });
+    process.stderr.write(`${c.green("✓")} ${c.dim(`${elapsedMs}ms`)}\n`);
+    return value;
+  } catch (err) {
+    const elapsedMs = Date.now() - t0;
+    const error = err instanceof Error ? err.message : String(err);
+    results.push({ name, ok: false, elapsedMs, error, hint });
+    process.stderr.write(`${c.red("✗")} ${c.dim(`${elapsedMs}ms`)}\n`);
+    process.stderr.write(`        ${c.red(error)}\n`);
+    if (hint) process.stderr.write(`        ${c.yellow("hint: " + hint)}\n`);
+    throw err;
+  }
+}
+
+function infoLine(text: string) {
+  process.stderr.write(`        ${c.dim(text)}\n`);
+}
+
+// ----- webterm API -----
+
+async function createSession(): Promise<{ id: string; cols: number; rows: number }> {
+  const res = await fetch(`${WEBTERM_URL}/api/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ title: "healthcheck", cols: COLS, rows: ROWS, cwd: CWD }),
+  });
+  if (!res.ok) throw new Error(`POST /api/sessions returned ${res.status}: ${await res.text()}`);
+  return await res.json();
+}
+
+async function killSession(id: string): Promise<void> {
+  await fetch(`${WEBTERM_URL}/api/sessions/${id}`, { method: "DELETE" });
+}
+
+async function sendInput(id: string, text: string): Promise<void> {
+  const base = `${WEBTERM_URL}/api/sessions/${id}/input`;
+  const a = await fetch(base, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "text", data: text }) });
+  if (!a.ok && a.status !== 204) throw new Error(`POST /input text returned ${a.status}`);
+  const b = await fetch(base, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "keys", keys: ["Enter"] }) });
+  if (!b.ok && b.status !== 204) throw new Error(`POST /input enter returned ${b.status}`);
+}
+
+async function fetchGridText(id: string): Promise<string> {
+  const res = await fetch(`${WEBTERM_URL}/api/sessions/${id}/text`);
+  if (!res.ok) throw new Error(`GET /text returned ${res.status}`);
+  return await res.text();
+}
+
+// ----- SSE prompt-ready listener -----
+
+interface SseHandle {
+  promptReadyCount: number;
+  alive: boolean;
+  abort: AbortController;
+  done: Promise<void>;
+}
+
+async function subscribeSse(id: string): Promise<SseHandle> {
+  const url =
+    `${WEBTERM_URL}/api/sessions/${id}/events` +
+    `?idleMs=1500&promptReady=true&promptReadyPollMs=400&promptReadyStablePolls=3`;
+  const abort = new AbortController();
+  const res = await fetch(url, { headers: { accept: "text/event-stream" }, signal: abort.signal });
+  if (!res.ok || !res.body) throw new Error(`GET /events returned ${res.status}`);
+  const handle: SseHandle = {
+    promptReadyCount: 0,
+    alive: true,
+    abort,
+    done: Promise.resolve(),
+  };
+  handle.done = (async () => {
+    const decoder = new TextDecoder();
+    let buf = "";
+    try {
+      for await (const chunk of res.body as any) {
+        if (abort.signal.aborted) break;
+        buf += decoder.decode(chunk as Uint8Array, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf("\n\n")) !== -1) {
+          const record = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          let event = "";
+          for (const line of record.split("\n")) {
+            if (line.startsWith("event:")) event = line.slice(6).trim();
+          }
+          if (event === "prompt-ready") handle.promptReadyCount++;
+          else if (event === "exit") handle.alive = false;
+        }
+      }
+    } catch {
+      // signal abort or stream end — caller handles via .alive
+    }
+  })();
+  return handle;
+}
+
+async function waitForPromptReady(sse: SseHandle, target: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!sse.alive) throw new Error("session exited before reaching prompt-ready");
+    if (sse.promptReadyCount >= target) return;
+    await sleep(50);
+  }
+  throw new Error(`prompt-ready ${target} not seen within ${timeoutMs}ms (saw ${sse.promptReadyCount})`);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// ----- main -----
+
+async function main(): Promise<number> {
+  process.stderr.write(c.bold("ClaudeClaw webterm-claude healthcheck\n"));
+  process.stderr.write(c.dim(`webterm api    = ${WEBTERM_URL}\n`));
+  if (includeUiCheck) process.stderr.write(c.dim(`webterm ui     = ${WEBTERM_UI_URL}\n`));
+  process.stderr.write(c.dim(`cwd            = ${CWD}\n`));
+  process.stderr.write(c.dim(`claude command = ${CLAUDE_CMD}\n`));
+  process.stderr.write(c.dim(`prompt         = ${JSON.stringify(HEALTHCHECK_PROMPT)}\n`));
+  process.stderr.write(c.dim(`expect contains = ${JSON.stringify(HEALTHCHECK_EXPECT)}\n`));
+  process.stderr.write("\n");
+
+  let sessionId: string | null = null;
+  let sse: SseHandle | null = null;
+  let exitCode = 0;
+
+  try {
+    await step(
+      `webterm API reachable at ${WEBTERM_URL}`,
+      async () => {
+        const res = await fetch(`${WEBTERM_URL}/api/health`);
+        if (!res.ok) throw new Error(`GET /api/health returned ${res.status}`);
+        const body = await res.json();
+        if (!body.ok) throw new Error(`/api/health responded { ok: false }`);
+      },
+      "start the server with: cd ~/projects/webterm && pnpm dev:server",
+    );
+
+    if (includeUiCheck) {
+      await step(
+        `webterm UI reachable at ${WEBTERM_UI_URL}`,
+        async () => {
+          const res = await fetch(WEBTERM_UI_URL);
+          if (!res.ok) throw new Error(`GET / returned ${res.status}`);
+          const text = await res.text();
+          if (!/<\/?html/i.test(text)) throw new Error("response did not look like HTML");
+        },
+        "start the UI with: cd ~/projects/webterm && pnpm dev:client",
+      );
+    }
+
+    const session = await step(
+      "create webterm session",
+      async () => createSession(),
+      "the API responded but session creation failed — check server logs",
+    );
+    sessionId = session.id;
+    infoLine(`session id = ${session.id}, ${session.cols}x${session.rows}`);
+
+    sse = await step(
+      "subscribe to SSE with promptReady=true",
+      async () => subscribeSse(session.id),
+      "if this 404s, you may be on an older webterm without the prompt-ready event — pull main",
+    );
+
+    const bootStart = Date.now();
+    await step(
+      `boot claude in ${CWD}`,
+      async () => {
+        infoLine(`sending: ${CLAUDE_CMD}`);
+        infoLine(`waiting for boot prompt-ready (timeout ${BOOT_TIMEOUT_MS}ms)`);
+        await sendInput(session.id, CLAUDE_CMD);
+        await waitForPromptReady(sse!, 1, BOOT_TIMEOUT_MS);
+      },
+      `if it times out: claude might be hitting the "trust this folder" dialog (claw-g790). Use a cwd you've opened with \`claude\` at least once.`,
+    );
+    infoLine(`boot completed in ${Date.now() - bootStart}ms`);
+
+    const turnStart = Date.now();
+    await step(
+      `send turn: ${JSON.stringify(HEALTHCHECK_PROMPT)}`,
+      async () => {
+        infoLine(`waiting for turn prompt-ready (timeout ${TURN_TIMEOUT_MS}ms)`);
+        await sendInput(session.id, HEALTHCHECK_PROMPT);
+        await waitForPromptReady(sse!, 2, TURN_TIMEOUT_MS);
+      },
+      "if it times out: claude may be slow or hit a blocking prompt — check the UI (port 5173) to see the live screen",
+    );
+    infoLine(`turn completed in ${Date.now() - turnStart}ms`);
+
+    const grid = await step(
+      "fetch /text grid snapshot",
+      async () => fetchGridText(session.id),
+    );
+    infoLine(`grid = ${grid.length} bytes`);
+
+    const turn = await step(
+      "extract assistant turn (production extractor)",
+      async () => {
+        const t = extractTurn(grid, HEALTHCHECK_PROMPT);
+        if (t === null) {
+          throw new Error(
+            `extractor returned null — could not find user input echo or no ⏺ block. ` +
+            `Could be claw-etj7 (premature prompt-ready). The bot path retries up to 3 times.`,
+          );
+        }
+        return t;
+      },
+    );
+    infoLine(`assistant: ${JSON.stringify(turn.assistant.slice(0, 120))}${turn.assistant.length > 120 ? "…" : ""}`);
+    if (turn.toolNotes.length > 0) infoLine(`toolNotes: ${JSON.stringify(turn.toolNotes)}`);
+
+    const slackText = await step(
+      "format for Slack",
+      async () => formatTurnForSlack(turn),
+    );
+    infoLine(`slack output: ${JSON.stringify(slackText.slice(0, 120))}${slackText.length > 120 ? "…" : ""}`);
+
+    await step(
+      `assertion: extracted contains ${JSON.stringify(HEALTHCHECK_EXPECT)}`,
+      async () => {
+        if (!turn.assistant.includes(HEALTHCHECK_EXPECT)) {
+          throw new Error(
+            `extracted answer ${JSON.stringify(turn.assistant)} does not contain expected marker ` +
+            `${JSON.stringify(HEALTHCHECK_EXPECT)} — claude answered something else than usual`,
+          );
+        }
+      },
+      "this is a sanity check, not a correctness check — claude is non-deterministic. " +
+        "If it fails, look at the assistant line above and decide if the answer is reasonable.",
+    );
+  } catch (err) {
+    exitCode = 1;
+    // first failure already logged by step(); we just stop here.
+  } finally {
+    if (sessionId !== null) {
+      try {
+        process.stderr.write(`[cleanup] DELETE session ${sessionId} ... `);
+        await killSession(sessionId);
+        process.stderr.write(`${c.green("✓")}\n`);
+      } catch (err) {
+        process.stderr.write(`${c.yellow("⚠")} (${err instanceof Error ? err.message : String(err)})\n`);
+      }
+    }
+    if (sse) sse.abort.abort();
+  }
+
+  const totalMs = Date.now() - overallStart;
+  process.stderr.write("\n");
+  if (exitCode === 0) {
+    process.stderr.write(`${c.green("OK")} — webterm-claude pipeline is healthy. ${c.dim(`total: ${totalMs}ms`)}\n`);
+  } else {
+    const firstFailure = results.find((r) => !r.ok);
+    process.stderr.write(`${c.red("FAIL")} — ${firstFailure?.name ?? "unknown step"} failed. ${c.dim(`total: ${totalMs}ms`)}\n`);
+  }
+  return exitCode;
+}
+
+main()
+  .then((code) => process.exit(code))
+  .catch((err) => {
+    console.error(c.red("uncaught error: " + (err instanceof Error ? err.message : String(err))));
+    process.exit(1);
+  });
