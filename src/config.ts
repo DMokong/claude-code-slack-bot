@@ -62,6 +62,12 @@ export const config = {
       .split(',')
       .map((s) => s.trim())
       .filter((s) => s.length > 0),
+    // Route ALL messages through the webterm runtime (vs the per-channel
+    // allowlist above). Use when migrating off the headless `claude -p` SDK
+    // path entirely. Falls back to the SDK path only for messages with file
+    // attachments (the webterm handler doesn't process files yet — that's
+    // claw-o05f / file-routing follow-ups).
+    routeAll: process.env.WEBTERM_ROUTE_ALL === '1' || process.env.WEBTERM_ROUTE_ALL === 'true',
     url: process.env.WEBTERM_URL || 'http://127.0.0.1:7681',
     cwd: process.env.WEBTERM_CWD || `${process.env.HOME}/projects/claudeclaw`,
     claudeCmd: process.env.WEBTERM_CLAUDE_CMD || 'claude --dangerously-skip-permissions',

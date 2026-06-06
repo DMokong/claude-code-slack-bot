@@ -135,14 +135,15 @@ export class SlackHandler {
     this.todoManager = new TodoManager();
     this.copilotHandler = new CopilotHandler();
     // Webterm-driven runtime — only instantiated if any channel is configured
-    // (claw-op2n Phase 2 demoable). Falls through to the SDK path otherwise.
-    if (config.webterm.channels.length > 0) {
+    // OR if WEBTERM_ROUTE_ALL is set. Falls through to the SDK path otherwise.
+    if (config.webterm.channels.length > 0 || config.webterm.routeAll) {
       this.webtermRuntime = new WebtermRuntimeHandler({
         webtermUrl: config.webterm.url,
         cwd: config.webterm.cwd,
         claudeCmd: config.webterm.claudeCmd,
       });
       this.logger.info('Webterm runtime enabled', {
+        routeAll: config.webterm.routeAll,
         channels: config.webterm.channels,
         url: config.webterm.url,
       });
@@ -167,15 +168,15 @@ export class SlackHandler {
     const { user, channel, thread_ts, ts, text, files } = event;
 
     // Webterm-driven claude runtime path (claw-op2n Phase 2 demoable).
-    // Configured channels short-circuit the SDK path entirely. Files /
-    // permission-prompt UX are out of scope for the demoable; those still
-    // need the SDK path. claw-o05f tracks the permission UX, claw-r56h
+    // Routes when EITHER routeAll is set OR the channel is allowlisted.
+    // Files / permission-prompt UX are out of scope for the demoable; those
+    // still need the SDK path. claw-o05f tracks the permission UX, claw-r56h
     // built the extractor that this handler depends on.
     if (
       this.webtermRuntime &&
       text &&
       (!files || files.length === 0) &&
-      config.webterm.channels.includes(channel)
+      (config.webterm.routeAll || config.webterm.channels.includes(channel))
     ) {
       this.logger.debug('Routing to webterm runtime', { channel, thread_ts: thread_ts || ts });
       await this.webtermRuntime.handleMessage({
