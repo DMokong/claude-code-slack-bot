@@ -242,7 +242,34 @@ describe("WebtermRuntimeHandler", () => {
     expect(slack.posted[1].text).toContain("B says hi");
   });
 
-  it("retries when the extractor returns null on a premature prompt-ready (claw-etj7)", async () => {
+  it("deduplicates concurrent first-message creations for the same thread", async () => {
+    const reqA = { channelId: "C1", threadTs: "T1", text: "first", slack: slack.client };
+    const reqB = { channelId: "C1", threadTs: "T1", text: "second", slack: slack.client };
+
+    // Fire both before the first session is created — they should share creation.
+    const pA = handler.handleMessage(reqA);
+    const pB = handler.handleMessage(reqB);
+
+    // Wait until ONE session exists with SSE bound.
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);  // boot
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);  // claude\n + first\n
+    mock.setText(id, buildTurnGrid("first", "ok one"));
+    mock.emitPromptReady(id);
+
+    // Second turn (the deferred B) shares the session.
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 6);
+    mock.setText(id, buildTurnGrid("second", "ok two"));
+    mock.emitPromptReady(id);
+
+    await Promise.all([pA, pB]);
+    // Critical: only ONE session, even though two messages arrived concurrently.
+    expect(mock.sessions.size).toBe(1);
+    expect(slack.posted).toHaveLength(2);
+  });
+
+  it("retries when extraction is empty on a premature prompt-ready (claw-etj7)", async () => {
     const req = { channelId: "C1", threadTs: "T1", text: "what gives?", slack: slack.client };
     const p = handler.handleMessage(req);
     await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
@@ -251,8 +278,9 @@ describe("WebtermRuntimeHandler", () => {
 
     await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
 
-    // First prompt-ready: claude hasn't responded yet — grid has user echo
-    // but no ⏺ block. Extractor will return null; handler should retry.
+    // First prompt-ready: claude hasn't responded yet — grid has the user echo
+    // (so extractor returns non-null) but no ⏺ block (so assistant is "").
+    // The handler must treat this as retryable, same as the null case.
     mock.setText(id, [
       "❯ what gives?",
       "",

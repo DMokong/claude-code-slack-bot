@@ -51,6 +51,27 @@ async function start() {
     // Start the app
     await app.start();
     logger.info('⚡️ Claude Code Slack bot is running!');
+
+    // Graceful shutdown — launchd sends SIGTERM on `launchctl unload` /
+    // `launchctl kickstart -k`. Without this handler the bot would exit
+    // without killing its webterm sessions; the next bot start would lose
+    // the in-memory thread→session map and create duplicate sessions for
+    // the same Slack threads (one orphan in webterm + one new).
+    let shuttingDown = false;
+    const gracefulShutdown = async (signal: string) => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      logger.info(`Received ${signal}, shutting down`);
+      try {
+        await slackHandler.shutdown();
+      } catch (err) {
+        logger.error('Shutdown error', err);
+      }
+      process.exit(0);
+    };
+    process.on('SIGTERM', () => void gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => void gracefulShutdown('SIGINT'));
+
     logger.info('Configuration:', {
       model: config.claude.model,
       usingBedrock: config.claude.useBedrock,

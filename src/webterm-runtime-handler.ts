@@ -62,6 +62,11 @@ interface InternalOpts extends Required<Omit<WebtermRuntimeOpts, "fetchImpl">> {
 
 export class WebtermRuntimeHandler {
   private sessions = new Map<string, WebtermSession>();
+  // Two messages arriving on the same Slack thread within the createSession
+  // window would both find the map empty and each create a webterm session.
+  // The first POST wins but the second leaves an orphan. Track in-flight
+  // creations here so concurrent callers await the same promise.
+  private creationInFlight = new Map<string, Promise<WebtermSession>>();
   private logger = new Logger("WebtermRuntime");
   private opts: InternalOpts;
 
@@ -89,9 +94,21 @@ export class WebtermRuntimeHandler {
       session = undefined;
     }
     if (!session) {
+      // De-dupe concurrent first-message creations for the same thread.
+      let creation = this.creationInFlight.get(key);
+      if (!creation) {
+        creation = this.createSession(key)
+          .then((s) => {
+            this.sessions.set(key, s);
+            return s;
+          })
+          .finally(() => {
+            this.creationInFlight.delete(key);
+          });
+        this.creationInFlight.set(key, creation);
+      }
       try {
-        session = await this.createSession(key);
-        this.sessions.set(key, session);
+        session = await creation;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.error("Session creation failed", { threadKey: key, error: msg });
@@ -140,19 +157,20 @@ export class WebtermRuntimeHandler {
 
       const grid = await this.fetchGridText(session.id);
       const turn = extractTurn(grid, req.text);
-      if (turn !== null) {
-        const slackText = formatTurnForSlack(turn);
-        if (slackText.trim()) {
-          await this.postReply(req, slackText);
-        } else {
-          this.logger.warn("Extracted turn was empty", { sessionId: session.id });
-          await this.postReply(req, "_(empty response)_");
-        }
+      // Both "null" (no user echo found) and "empty assistant block" can mean
+      // the same thing: claude hasn't actually responded yet — prompt-ready
+      // fired prematurely (claw-etj7). Treat both as retryable.
+      const haveContent =
+        turn !== null && (turn.assistant.trim().length > 0 || turn.toolNotes.length > 0);
+      if (haveContent) {
+        const slackText = formatTurnForSlack(turn!);
+        await this.postReply(req, slackText);
         return;
       }
-      this.logger.warn("Extractor returned null (claw-etj7 false-positive?), retrying", {
+      this.logger.warn("Empty extraction (claw-etj7 false-positive?), retrying", {
         sessionId: session.id,
         attempt: attempts,
+        turnIsNull: turn === null,
       });
     }
 
