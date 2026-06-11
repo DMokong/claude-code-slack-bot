@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { WebtermRuntimeHandler } from "./webterm-runtime-handler";
+import { WebtermRuntimeHandler, shellSingleQuote } from "./webterm-runtime-handler";
 
 // Mock webterm: records HTTP calls and lets the test drive SSE events
 // through a writable readable-stream pump.
@@ -151,6 +151,7 @@ describe("WebtermRuntimeHandler", () => {
       webtermUrl: "http://test.local",
       fetchImpl: mock.fetchImpl,
       cwd: "/tmp/test",
+      pasteSettleMs: 5,
     });
   });
 
@@ -317,6 +318,85 @@ describe("WebtermRuntimeHandler", () => {
     await handler.handleMessage(req);
     expect(slack.posted).toHaveLength(1);
     expect(slack.posted[0].text).toMatch(/webterm session creation failed/);
+  });
+
+  it("sends turn text as bracketed paste and delays Enter past the paste-settle window", async () => {
+    // claude's TUI swallows an Enter that arrives immediately after a bracketed
+    // paste (aggregated into the paste burst as a newline) — verified empirically
+    // 2026-06-11 on v2.1.173. The handler must wait out the settle window.
+    handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local",
+      fetchImpl: mock.fetchImpl,
+      cwd: "/tmp/test",
+      pasteSettleMs: 250,
+    });
+    const text = "line one\nline two\n```\nconst x = 1;\n```";
+    const p = handler.handleMessage({ channelId: "C1", threadTs: "T1", text, slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot done
+
+    // The turn text arrives as inputs[2] (after boot cmd + its Enter).
+    await waitFor(() => mock.sessions.get(id)!.inputs.length === 3);
+    const inputs = mock.sessions.get(id)!.inputs;
+    expect(inputs[0].kind).toBe("text"); // boot command path unchanged
+    expect(inputs[2]).toEqual({ kind: "paste", data: text });
+
+    // Enter must NOT follow within the settle window.
+    await sleep(60);
+    expect(mock.sessions.get(id)!.inputs.length).toBe(3);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    expect(mock.sessions.get(id)!.inputs[3]).toEqual({ kind: "keys", keys: ["Enter"] });
+
+    mock.setText(id, buildTurnGrid("line one", "got the snippet"));
+    mock.emitPromptReady(id);
+    await p;
+    expect(slack.posted).toHaveLength(1);
+    expect(slack.posted[0].text).toContain("got the snippet");
+  });
+
+  it("boots claude with --append-system-prompt carrying channel + thread context", async () => {
+    const p = handler.handleMessage({
+      channelId: "C0AKRDL2Y9F",
+      threadTs: "1717.42",
+      text: "hello",
+      slack: slack.client,
+    });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    mock.setText(id, buildTurnGrid("hello", "hi"));
+    mock.emitPromptReady(id);
+    await p;
+
+    const boot = mock.sessions.get(id)!.inputs[0];
+    expect(boot.kind).toBe("text");
+    expect(boot.data).toContain(
+      "--append-system-prompt 'You are responding in Slack channel ID: C0AKRDL2Y9F (thread: 1717.42).",
+    );
+    expect(boot.data).toContain("channel-specific protocols");
+    expect(boot.data).toContain("Format responses for Slack");
+  });
+
+  it("omits the thread clause when there is no threadTs", async () => {
+    const p = handler.handleMessage({
+      channelId: "D777",
+      threadTs: undefined,
+      text: "yo",
+      slack: slack.client,
+    });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    mock.setText(id, buildTurnGrid("yo", "hey"));
+    mock.emitPromptReady(id);
+    await p;
+
+    const boot = mock.sessions.get(id)!.inputs[0];
+    expect(boot.data).toContain("Slack channel ID: D777.");
+    expect(boot.data).not.toContain("(thread:");
   });
 
   it("shutdown() aborts SSE listeners and kills all sessions", async () => {

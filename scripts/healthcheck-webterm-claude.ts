@@ -7,11 +7,12 @@
 //   3. create webterm session
 //   4. subscribe to SSE with promptReady=true
 //   5. boot `claude` in the configured cwd
-//   6. send a known-answer turn ("what is 2 plus 2?")
-//   7. fetch grid text from /text
-//   8. extract assistant turn via the PRODUCTION extractor
-//   9. format for Slack
-//  10. assert the extracted text contains the expected answer marker
+//   6. send a known-answer turn ("what is 2 plus 2?") — bracketed paste +
+//      settle delay, mirroring the production handler's input path
+//   7. fetch grid + extract assistant turn via the PRODUCTION extractor,
+//      retrying on empty extraction like the bot does (claw-etj7 compensation)
+//   8. format for Slack
+//   9. assert the extracted text contains the expected answer marker
 //  cleanup. kill session.
 //
 // Run from the slack-bot repo root:
@@ -59,7 +60,11 @@ interface StepResult {
 const results: StepResult[] = [];
 const overallStart = Date.now();
 let stepIndex = 0;
-const totalSteps = includeUiCheck ? 11 : 10;
+const totalSteps = includeUiCheck ? 10 : 9;
+// Mirror the production handler: wait out claude's paste-aggregation window
+// before Enter, or the submit keystroke is swallowed into the paste.
+const PASTE_SETTLE_MS = 1_000;
+const ETJ7_MAX_ATTEMPTS = 3;
 
 async function step<T>(name: string, fn: () => Promise<T>, hint?: string): Promise<T> {
   stepIndex++;
@@ -103,10 +108,15 @@ async function killSession(id: string): Promise<void> {
   await fetch(`${WEBTERM_URL}/api/sessions/${id}`, { method: "DELETE" });
 }
 
-async function sendInput(id: string, text: string): Promise<void> {
+async function sendInput(
+  id: string,
+  text: string,
+  opts: { kind?: "text" | "paste"; settleMs?: number } = {},
+): Promise<void> {
   const base = `${WEBTERM_URL}/api/sessions/${id}/input`;
-  const a = await fetch(base, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "text", data: text }) });
+  const a = await fetch(base, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: opts.kind ?? "text", data: text }) });
   if (!a.ok && a.status !== 204) throw new Error(`POST /input text returned ${a.status}`);
+  if (opts.settleMs) await sleep(opts.settleMs);
   const b = await fetch(base, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "keys", keys: ["Enter"] }) });
   if (!b.ok && b.status !== 204) throw new Error(`POST /input enter returned ${b.status}`);
 }
@@ -252,30 +262,33 @@ async function main(): Promise<number> {
       `send turn: ${JSON.stringify(HEALTHCHECK_PROMPT)}`,
       async () => {
         infoLine(`waiting for turn prompt-ready (timeout ${TURN_TIMEOUT_MS}ms)`);
-        await sendInput(session.id, HEALTHCHECK_PROMPT);
+        // Bracketed paste + settle, same as the production handler's turn path.
+        await sendInput(session.id, HEALTHCHECK_PROMPT, { kind: "paste", settleMs: PASTE_SETTLE_MS });
         await waitForPromptReady(sse!, 2, TURN_TIMEOUT_MS);
       },
       "if it times out: claude may be slow or hit a blocking prompt — check the UI (port 5173) to see the live screen",
     );
     infoLine(`turn completed in ${Date.now() - turnStart}ms`);
 
-    const grid = await step(
-      "fetch /text grid snapshot",
-      async () => fetchGridText(session.id),
-    );
-    infoLine(`grid = ${grid.length} bytes`);
-
     const turn = await step(
-      "extract assistant turn (production extractor)",
+      `fetch grid + extract turn (claw-etj7 retry x${ETJ7_MAX_ATTEMPTS})`,
       async () => {
-        const t = extractTurn(grid, HEALTHCHECK_PROMPT);
-        if (t === null) {
-          throw new Error(
-            `extractor returned null — could not find user input echo or no ⏺ block. ` +
-            `Could be claw-etj7 (premature prompt-ready). The bot path retries up to 3 times.`,
-          );
+        for (let attempt = 1; attempt <= ETJ7_MAX_ATTEMPTS; attempt++) {
+          const grid = await fetchGridText(session.id);
+          infoLine(`attempt ${attempt}: grid = ${grid.length} bytes`);
+          const t = extractTurn(grid, HEALTHCHECK_PROMPT);
+          // Same retry condition as the bot, but stricter on content: the
+          // healthcheck needs the assistant text itself, not just tool notes.
+          if (t !== null && t.assistant.trim().length > 0) return t;
+          if (attempt < ETJ7_MAX_ATTEMPTS) {
+            infoLine(`empty extraction (claw-etj7 premature prompt-ready?) — waiting for next prompt-ready`);
+            await waitForPromptReady(sse!, 2 + attempt, 60_000);
+          }
         }
-        return t;
+        throw new Error(
+          `extractor returned no assistant text after ${ETJ7_MAX_ATTEMPTS} attempts — ` +
+          `claude never rendered a ⏺ block, or the TUI format drifted (gotcha #8: diff /text against test/fixtures/webterm-grids/)`,
+        );
       },
     );
     infoLine(`assistant: ${JSON.stringify(turn.assistant.slice(0, 120))}${turn.assistant.length > 120 ? "…" : ""}`);

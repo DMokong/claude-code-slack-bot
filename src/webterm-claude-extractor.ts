@@ -32,9 +32,10 @@ const DEFAULT_ASSISTANT_MARKER = "⏺ ";
 // content. Each rule is independent; a line matching ANY rule is dropped.
 const CHROME_RULES: RegExp[] = [
   /^\s*─{4,}\s*$/,                                          // horizontal rules between regions
-  /^\s*[✻✶✳✢✽⠂⠐⠈⠁]\s+\S+(?:ing|ed)\s+for\s+\d+s\s*$/,        // spinner: "✻ Cooked for 3s"
-  /^\s*[✻✶✳✢✽⠂⠐⠈⠁]\s+\S+ing…\s*$/,                          // spinner: "✻ Pondering…"
-  /^\s*Opus\s+\d/,                                           // model status row
+  /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+s\s*$/,       // spinner: "✻ Cooked for 3s"
+  /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+ing…\s*$/,                         // spinner: "✻ Pondering…" / "· Frolicking…"
+  /^\s*Opus\s+\d/,                                           // model status row (pre-Fable)
+  /^\s*Fable\s+\d/,                                          // model status row (v2.1.173+)
   /^\s*[●○]\s+(high|medium|low)\b/,                          // effort indicator
   /^\s*(main|master|HEAD)\s*[●◆◇]?\s*│/,                     // git branch row
   /^\s*🧠\s+/,                                                // memory ribbon

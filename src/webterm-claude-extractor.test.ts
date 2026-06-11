@@ -83,9 +83,57 @@ describe("extractTurn — real claude grid fixtures", () => {
       if (!turn) continue;
       expect(turn.assistant).not.toMatch(/✻.*for\s+\d+s/);
       expect(turn.assistant).not.toMatch(/Opus\s+\d/);
+      expect(turn.assistant).not.toMatch(/Fable\s+\d/);
       expect(turn.assistant).not.toMatch(/⏵⏵/);
       expect(turn.assistant).not.toMatch(/─{4,}/);
     }
+  });
+});
+
+describe("extractTurn — Fable-era TUI (claude v2.1.173, bracketed-paste input)", () => {
+  it("fable-multiline-paste-turn: finds the multi-line paste echo and extracts the response", () => {
+    const f = loadFixture("fable-multiline-paste-turn");
+    const turn = extractTurn(f.grid, f.userInput);
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).toBe("PROBE-OK");
+    expect(turn!.toolNotes).toEqual([]);
+  });
+
+  it("fable-large-paste-spinner: mid-turn grid (no ⏺ yet) extracts empty and retryable, spinner filtered", () => {
+    const f = loadFixture("fable-large-paste-spinner");
+    const turn = extractTurn(f.grid, f.userInput);
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).toBe("");
+    expect(turn!.toolNotes).toEqual([]);
+  });
+
+  it("filters the '·'-glyph spinner frame as chrome (leaked into toolNotes in 2026-06-11 healthcheck)", () => {
+    const grid = [
+      "❯ what is 2 plus 2? answer in one short sentence.",
+      "",
+      "· Frolicking…",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+    ].join("\n");
+    const turn = extractTurn(grid, "what is 2 plus 2? answer in one short sentence.");
+    expect(turn).not.toBeNull();
+    expect(turn!.toolNotes).toEqual([]);
+    expect(turn!.assistant).toBe("");
+  });
+
+  it("filters the Fable model status row as chrome when no bottom prompt bounds the region", () => {
+    const grid = [
+      "❯ hi",
+      "",
+      "⏺ hello there",
+      "",
+      "   Fable 5 │ ░░░░░░░░░░ 0%/1000k (0) │ $0.00 │ ⏱ 2s",
+    ].join("\n");
+    const turn = extractTurn(grid, "hi");
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).toBe("hello there");
   });
 });
 

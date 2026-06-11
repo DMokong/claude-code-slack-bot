@@ -1,0 +1,64 @@
+__USER_INPUT__
+analyze this log dump:
+2026-06-11T10:00:00 INFO worker-0 processed batch 0 of 20 with zero errors
+2026-06-11T10:00:01 INFO worker-1 processed batch 1 of 20 with zero errors
+2026-06-11T10:00:02 INFO worker-2 processed batch 2 of 20 with zero errors
+2026-06-11T10:00:03 INFO worker-3 processed batch 3 of 20 with zero errors
+2026-06-11T10:00:04 INFO worker-4 processed batch 4 of 20 with zero errors
+2026-06-11T10:00:05 INFO worker-5 processed batch 5 of 20 with zero errors
+2026-06-11T10:00:06 INFO worker-6 processed batch 6 of 20 with zero errors
+2026-06-11T10:00:07 INFO worker-7 processed batch 7 of 20 with zero errors
+2026-06-11T10:00:08 INFO worker-8 processed batch 8 of 20 with zero errors
+2026-06-11T10:00:09 INFO worker-9 processed batch 9 of 20 with zero errors
+2026-06-11T10:00:10 INFO worker-10 processed batch 10 of 20 with zero errors
+2026-06-11T10:00:11 INFO worker-11 processed batch 11 of 20 with zero errors
+2026-06-11T10:00:12 INFO worker-12 processed batch 12 of 20 with zero errors
+2026-06-11T10:00:13 INFO worker-13 processed batch 13 of 20 with zero errors
+2026-06-11T10:00:14 INFO worker-14 processed batch 14 of 20 with zero errors
+2026-06-11T10:00:15 INFO worker-15 processed batch 15 of 20 with zero errors
+2026-06-11T10:00:16 INFO worker-16 processed batch 16 of 20 with zero errors
+2026-06-11T10:00:17 INFO worker-17 processed batch 17 of 20 with zero errors
+2026-06-11T10:00:18 INFO worker-18 processed batch 18 of 20 with zero errors
+2026-06-11T10:00:19 INFO worker-19 processed batch 19 of 20 with zero errors
+reply with just: BIGPASTE-OK
+__GRID__
+ ▐▛███▜▌   Claude Code v2.1.173
+▝▜█████▛▘  Fable 5 with xhigh effort · Claude Max
+  ▘▘ ▝▝    ~/projects/claudeclaw
+
+ ▎ Fable 5 is here! Our newest model for complex, long-running work
+ ▎ Included in your plan limits until Jun 22, then switch to usage credits to continue.
+
+❯ analyze this log dump:
+  2026-06-11T10:00:00 INFO worker-0 processed batch 0 of 20 with zero errors
+  2026-06-11T10:00:01 INFO worker-1 processed batch 1 of 20 with zero errors
+  2026-06-11T10:00:02 INFO worker-2 processed batch 2 of 20 with zero errors
+  2026-06-11T10:00:03 INFO worker-3 processed batch 3 of 20 with zero errors
+  2026-06-11T10:00:04 INFO worker-4 processed batch 4 of 20 with zero errors
+  2026-06-11T10:00:05 INFO worker-5 processed batch 5 of 20 with zero errors
+  2026-06-11T10:00:06 INFO worker-6 processed batch 6 of 20 with zero errors
+  2026-06-11T10:00:07 INFO worker-7 processed batch 7 of 20 with zero errors
+  2026-06-11T10:00:08 INFO worker-8 processed batch 8 of 20 with zero errors
+  2026-06-11T10:00:09 INFO worker-9 processed batch 9 of 20 with zero errors
+  2026-06-11T10:00:10 INFO worker-10 processed batch 10 of 20 with zero errors
+  2026-06-11T10:00:11 INFO worker-11 processed batch 11 of 20 with zero errors
+  2026-06-11T10:00:12 INFO worker-12 processed batch 12 of 20 with zero errors
+  2026-06-11T10:00:13 INFO worker-13 processed batch 13 of 20 with zero errors
+  2026-06-11T10:00:14 INFO worker-14 processed batch 14 of 20 with zero errors
+  2026-06-11T10:00:15 INFO worker-15 processed batch 15 of 20 with zero errors
+  2026-06-11T10:00:16 INFO worker-16 processed batch 16 of 20 with zero errors
+  2026-06-11T10:00:17 INFO worker-17 processed batch 17 of 20 with zero errors
+  2026-06-11T10:00:18 INFO worker-18 processed batch 18 of 20 with zero errors
+  2026-06-11T10:00:19 INFO worker-19 processed batch 19 of 20 with zero errors
+  reply with just: BIGPASTE-OK
+
+✶ Pouncing…
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Fable 5 │ ░░░░░░░░░░░░░░░░░░░░ 0%%/1000k (0) │ $0.00 │ ⏱ 1s
+   main ● │ ~/projects/claudeclaw │ v2.1.173
+   🧠  ████░░░░░░ 87/200 │ 11 topics (500L) │ ✏ never
+  paste again to expand
+__SCROLLBACK__

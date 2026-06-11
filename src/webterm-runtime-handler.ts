@@ -22,6 +22,11 @@ const DEFAULT_ROWS = 40;
 const DEFAULT_IDLE_MS = 1500;
 const DEFAULT_PROMPT_POLL_MS = 400;
 const DEFAULT_PROMPT_STABLE_POLLS = 3;
+// claude's TUI aggregates input arriving right after a bracketed paste into
+// the paste itself — an Enter sent immediately is swallowed as a pasted
+// newline and the message never submits. Verified empirically 2026-06-11 on
+// v2.1.173: immediate Enter never submits, 600ms+ always does. 1s for margin.
+const DEFAULT_PASTE_SETTLE_MS = 1_000;
 const BOOT_TIMEOUT_MS = 60_000;
 const TURN_TIMEOUT_MS = 180_000;
 // Compensating control for claw-etj7: extractor returns null on no-⏺-block
@@ -34,6 +39,7 @@ export interface WebtermRuntimeOpts {
   cwd?: string;
   cols?: number;
   rows?: number;
+  pasteSettleMs?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -77,6 +83,7 @@ export class WebtermRuntimeHandler {
       cwd: opts.cwd ?? `${process.env.HOME}/projects/claudeclaw`,
       cols: opts.cols ?? DEFAULT_COLS,
       rows: opts.rows ?? DEFAULT_ROWS,
+      pasteSettleMs: opts.pasteSettleMs ?? DEFAULT_PASTE_SETTLE_MS,
       fetchImpl: opts.fetchImpl ?? fetch,
     };
   }
@@ -97,7 +104,7 @@ export class WebtermRuntimeHandler {
       // De-dupe concurrent first-message creations for the same thread.
       let creation = this.creationInFlight.get(key);
       if (!creation) {
-        creation = this.createSession(key)
+        creation = this.createSession(key, req.channelId, req.threadTs)
           .then((s) => {
             this.sessions.set(key, s);
             return s;
@@ -136,7 +143,12 @@ export class WebtermRuntimeHandler {
     let attempts = 0;
     let startCount = session.promptReadyCount;
     try {
-      await this.sendInput(session.id, req.text);
+      // Bracketed paste so newlines in multi-line Slack messages insert
+      // literally instead of acting as Enter and submitting prematurely.
+      await this.sendInput(session.id, req.text, {
+        kind: "paste",
+        settleMs: this.opts.pasteSettleMs,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error("sendInput failed", { sessionId: session.id, error: msg });
@@ -178,7 +190,23 @@ export class WebtermRuntimeHandler {
     await this.postReply(req, ":warning: claude did not produce a response after multiple retries.");
   }
 
-  private async createSession(threadKey: string): Promise<WebtermSession> {
+  // Channel context restores what the SDK path provided via appendSystemPrompt:
+  // claude inside the REPL knows which channel it's serving and can pick up
+  // channel-specific protocols from CLAUDE.md (e.g. #cc-ai discourse mode).
+  private buildBootCmd(channelId: string, threadTs: string | undefined): string {
+    const ctx =
+      `You are responding in Slack channel ID: ${channelId}` +
+      (threadTs ? ` (thread: ${threadTs})` : "") +
+      `. Check CLAUDE.md for any channel-specific protocols (e.g., #cc-ai Discourse Protocol). ` +
+      `Format responses for Slack: plain prose, minimal markdown, no wide tables.`;
+    return `${this.opts.claudeCmd} --append-system-prompt ${shellSingleQuote(ctx)}`;
+  }
+
+  private async createSession(
+    threadKey: string,
+    channelId: string,
+    threadTs: string | undefined,
+  ): Promise<WebtermSession> {
     const res = await this.opts.fetchImpl(`${this.opts.webtermUrl}/api/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -203,7 +231,7 @@ export class WebtermRuntimeHandler {
     };
     session.ssePromise = this.runSseListener(session);
     // Boot claude inside the session.
-    await this.sendInput(session.id, this.opts.claudeCmd);
+    await this.sendInput(session.id, this.buildBootCmd(channelId, threadTs));
     try {
       await this.waitForPromptReady(session, 1, BOOT_TIMEOUT_MS);
     } catch (err) {
@@ -259,14 +287,21 @@ export class WebtermRuntimeHandler {
     }
   }
 
-  private async sendInput(sessionId: string, text: string): Promise<void> {
+  private async sendInput(
+    sessionId: string,
+    text: string,
+    opts: { kind?: "text" | "paste"; settleMs?: number } = {},
+  ): Promise<void> {
     const base = `${this.opts.webtermUrl}/api/sessions/${sessionId}/input`;
     const txt = await this.opts.fetchImpl(base, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "text", data: text }),
+      body: JSON.stringify({ kind: opts.kind ?? "text", data: text }),
     });
     if (!txt.ok && txt.status !== 204) throw new Error(`sendInput text ${txt.status}`);
+    // Wait out claude's paste-aggregation window before Enter, or the
+    // submit keystroke is swallowed into the paste (see DEFAULT_PASTE_SETTLE_MS).
+    if (opts.settleMs) await sleep(opts.settleMs);
     const enter = await this.opts.fetchImpl(base, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -329,6 +364,12 @@ export class WebtermRuntimeHandler {
   _sessionCount(): number {
     return this.sessions.size;
   }
+}
+
+// POSIX single-quote escaping for command lines fed to a zsh PTY:
+// close the quote, emit an escaped literal quote, reopen.
+export function shellSingleQuote(s: string): string {
+  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 function sleep(ms: number): Promise<void> {
