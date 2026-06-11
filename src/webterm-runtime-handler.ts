@@ -562,16 +562,21 @@ export function shellSingleQuote(s: string): string {
 }
 
 // Slack mrkdwn escapes exactly three characters in message text. Decode
-// &amp; last so double-encoded input stays literal. Also strip the
-// "*Sent using* Claude" transport suffix that claude.ai-connected Slack
-// clients append — it's metadata, not user intent, and claude visibly
-// trips over it mid-conversation.
+// &amp; last so double-encoded input stays literal. The transport suffix is
+// stripped here too as a second line of defense — slack-handler strips it
+// before command parsing, but this handler is also driven directly by tests
+// and future surfaces.
 export function decodeSlackEntities(s: string): string {
-  return s
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/\s*\*Sent using\* Claude\s*$/, "");
+  return stripTransportSuffix(
+    s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"),
+  );
+}
+
+// "*Sent using* Claude" is appended by claude.ai-connected Slack clients.
+// It's metadata, never user intent — claude visibly trips over it
+// mid-conversation and it breaks cwd/mcp command parsing.
+export function stripTransportSuffix(s: string): string {
+  return s.replace(/\s*\*Sent using\* Claude\s*$/, "");
 }
 
 function sleep(ms: number): Promise<void> {

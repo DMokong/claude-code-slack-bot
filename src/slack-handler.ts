@@ -16,7 +16,7 @@ import { threadToSessionId } from './session-id';
 import { setEngine, getThreadEntry } from './thread-state-manager';
 import { resolveEngine, EngineResolution } from './engine-router';
 import { CopilotHandler } from './copilot-handler';
-import { WebtermRuntimeHandler } from './webterm-runtime-handler';
+import { WebtermRuntimeHandler, stripTransportSuffix } from './webterm-runtime-handler';
 
 /**
  * Maps Unicode emoji characters to Slack reaction shortcode names.
@@ -169,7 +169,11 @@ export class SlackHandler {
   }
 
   async handleMessage(event: MessageEvent, say: any) {
-    const { user, channel, thread_ts, ts, text, files } = event;
+    const { user, channel, thread_ts, ts, files } = event;
+    // Strip the "*Sent using* Claude" transport suffix BEFORE any command
+    // parsing — claude.ai-connected Slack clients append it and it breaks
+    // cwd/mcp command parsing as well as polluting claude turns.
+    const text = event.text ? stripTransportSuffix(event.text) : event.text;
 
     // Webterm-driven claude runtime path (claw-op2n Phase 2 demoable).
     // Routes when EITHER routeAll is set OR the channel is allowlisted.
