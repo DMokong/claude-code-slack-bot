@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { WebtermRuntimeHandler, shellSingleQuote } from "./webterm-runtime-handler";
+import { WebtermRuntimeHandler, shellSingleQuote, decodeSlackEntities } from "./webterm-runtime-handler";
 
 // Mock webterm: records HTTP calls and lets the test drive SSE events
 // through a writable readable-stream pump.
@@ -152,6 +152,7 @@ describe("WebtermRuntimeHandler", () => {
       fetchImpl: mock.fetchImpl,
       cwd: "/tmp/test",
       pasteSettleMs: 5,
+      extractStableMs: 10,
     });
   });
 
@@ -399,6 +400,46 @@ describe("WebtermRuntimeHandler", () => {
     expect(boot.data).not.toContain("(thread:");
   });
 
+  it("waits for the render to settle before posting — partial ⏺ at prompt-ready (fable thinking pauses)", async () => {
+    // Observed live 2026-06-11: fable at max effort pauses >1.2s mid-render,
+    // prompt-ready fires, and a 3-part answer posted with only part 1. The
+    // handler must confirm the extraction is stable before posting.
+    const req = { channelId: "C1", threadTs: "T1", text: "three parts please", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    // Prompt-ready fires while only part one is rendered…
+    mock.setText(id, buildTurnGrid("three parts please", "part one."));
+    mock.emitPromptReady(id);
+    // …and the rest of the response lands during the stability window.
+    await sleep(5);
+    mock.setText(id, buildTurnGrid("three parts please", "part one. part two. part three."));
+
+    await p;
+    expect(slack.posted).toHaveLength(1);
+    expect(slack.posted[0].text).toContain("part three");
+  });
+
+  it("decodes Slack mrkdwn HTML entities before sending to the PTY", async () => {
+    // Slack escapes & < > in message text; pasting them raw corrupts code
+    // (observed live: `=>` arrived in claude's input as `=&gt;`).
+    const raw = "is a &lt; b &amp;&amp; b &gt; c? also: x =&gt; y";
+    const decoded = "is a < b && b > c? also: x => y";
+    const p = handler.handleMessage({ channelId: "C1", threadTs: "T1", text: raw, slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    expect(mock.sessions.get(id)!.inputs[2]).toEqual({ kind: "paste", data: decoded });
+    mock.setText(id, buildTurnGrid(decoded, "yes on both"));
+    mock.emitPromptReady(id);
+    await p;
+    expect(slack.posted[0].text).toContain("yes on both");
+  });
+
   it("shutdown() aborts SSE listeners and kills all sessions", async () => {
     const req = { channelId: "C1", threadTs: "T1", text: "hi", slack: slack.client };
     const p = handler.handleMessage(req);
@@ -414,6 +455,18 @@ describe("WebtermRuntimeHandler", () => {
     await handler.shutdown();
     expect(handler._sessionCount()).toBe(0);
     expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes(id))).toBeTruthy();
+  });
+});
+
+describe("decodeSlackEntities", () => {
+  it("decodes the three entities Slack escapes in message text", () => {
+    expect(decodeSlackEntities("a &lt; b &gt; c &amp; d")).toBe("a < b > c & d");
+  });
+  it("decodes &amp; last so double-encoded sequences stay literal", () => {
+    expect(decodeSlackEntities("&amp;lt;")).toBe("&lt;");
+  });
+  it("passes through text without entities", () => {
+    expect(decodeSlackEntities("plain text")).toBe("plain text");
   });
 });
 

@@ -276,10 +276,23 @@ async function main(): Promise<number> {
         for (let attempt = 1; attempt <= ETJ7_MAX_ATTEMPTS; attempt++) {
           const grid = await fetchGridText(session.id);
           infoLine(`attempt ${attempt}: grid = ${grid.length} bytes`);
-          const t = extractTurn(grid, HEALTHCHECK_PROMPT);
+          let t = extractTurn(grid, HEALTHCHECK_PROMPT);
           // Same retry condition as the bot, but stricter on content: the
           // healthcheck needs the assistant text itself, not just tool notes.
-          if (t !== null && t.assistant.trim().length > 0) return t;
+          if (t !== null && t.assistant.trim().length > 0) {
+            // Mirror the bot's render-settle confirmation: prompt-ready can
+            // fire mid-render (fable thinking pauses), so re-extract until
+            // two consecutive snapshots match before trusting the content.
+            for (let i = 0; i < 20; i++) {
+              await sleep(1_500);
+              const again = extractTurn(await fetchGridText(session.id), HEALTHCHECK_PROMPT);
+              if (!again) break;
+              if (again.assistant === t!.assistant) return again;
+              infoLine(`render still settling (snapshot grew) — re-polling`);
+              t = again;
+            }
+            return t;
+          }
           if (attempt < ETJ7_MAX_ATTEMPTS) {
             infoLine(`empty extraction (claw-etj7 premature prompt-ready?) — waiting for next prompt-ready`);
             await waitForPromptReady(sse!, 2 + attempt, 60_000);

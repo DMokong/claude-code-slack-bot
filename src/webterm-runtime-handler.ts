@@ -13,7 +13,7 @@
 
 import type { WebClient } from "@slack/web-api";
 import { Logger } from "./logger";
-import { extractTurn, formatTurnForSlack } from "./webterm-claude-extractor";
+import { extractTurn, formatTurnForSlack, type ExtractedTurn } from "./webterm-claude-extractor";
 
 const DEFAULT_WEBTERM_URL = "http://127.0.0.1:7681";
 const DEFAULT_CLAUDE_CMD = "claude --dangerously-skip-permissions";
@@ -27,6 +27,12 @@ const DEFAULT_PROMPT_STABLE_POLLS = 3;
 // newline and the message never submits. Verified empirically 2026-06-11 on
 // v2.1.173: immediate Enter never submits, 600ms+ always does. 1s for margin.
 const DEFAULT_PASTE_SETTLE_MS = 1_000;
+// Fable-era models pause >1.2s mid-render, so prompt-ready can fire while the
+// response is still streaming (observed live 2026-06-11: a 3-part answer
+// posted with only part 1). After a non-empty extraction, keep re-extracting
+// until two consecutive snapshots match before posting.
+const DEFAULT_EXTRACT_STABLE_MS = 1_500;
+const RENDER_SETTLE_DEADLINE_MS = 120_000;
 const BOOT_TIMEOUT_MS = 60_000;
 const TURN_TIMEOUT_MS = 180_000;
 // Compensating control for claw-etj7: extractor returns null on no-⏺-block
@@ -40,6 +46,7 @@ export interface WebtermRuntimeOpts {
   cols?: number;
   rows?: number;
   pasteSettleMs?: number;
+  extractStableMs?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -84,6 +91,7 @@ export class WebtermRuntimeHandler {
       cols: opts.cols ?? DEFAULT_COLS,
       rows: opts.rows ?? DEFAULT_ROWS,
       pasteSettleMs: opts.pasteSettleMs ?? DEFAULT_PASTE_SETTLE_MS,
+      extractStableMs: opts.extractStableMs ?? DEFAULT_EXTRACT_STABLE_MS,
       fetchImpl: opts.fetchImpl ?? fetch,
     };
   }
@@ -92,7 +100,10 @@ export class WebtermRuntimeHandler {
     return `${channelId}::${threadTs ?? "dm"}`;
   }
 
-  async handleMessage(req: HandleMessageOpts): Promise<void> {
+  async handleMessage(rawReq: HandleMessageOpts): Promise<void> {
+    // Slack escapes & < > in message text; pasting them raw corrupts code
+    // (observed live: `=>` arrived in claude's input as `=&gt;`).
+    const req: HandleMessageOpts = { ...rawReq, text: decodeSlackEntities(rawReq.text) };
     const key = this.threadKey(req.channelId, req.threadTs);
     let session = this.sessions.get(key);
     if (session && !session.alive) {
@@ -175,7 +186,8 @@ export class WebtermRuntimeHandler {
       const haveContent =
         turn !== null && (turn.assistant.trim().length > 0 || turn.toolNotes.length > 0);
       if (haveContent) {
-        const slackText = formatTurnForSlack(turn!);
+        const settled = await this.awaitRenderSettled(session, req.text, turn!);
+        const slackText = formatTurnForSlack(settled);
         await this.postReply(req, slackText);
         return;
       }
@@ -188,6 +200,35 @@ export class WebtermRuntimeHandler {
 
     this.logger.error("Exhausted false-positive retries", { sessionId: session.id, attempts });
     await this.postReply(req, ":warning: claude did not produce a response after multiple retries.");
+  }
+
+  // Re-extract until two consecutive snapshots match (the response stopped
+  // growing), bounded by RENDER_SETTLE_DEADLINE_MS. Best-effort: on webterm
+  // errors or a vanished echo, post the last good extraction.
+  private async awaitRenderSettled(
+    session: WebtermSession,
+    userText: string,
+    last: ExtractedTurn,
+  ): Promise<ExtractedTurn> {
+    const deadline = Date.now() + RENDER_SETTLE_DEADLINE_MS;
+    let prev = JSON.stringify([last.assistant, last.toolNotes]);
+    while (Date.now() < deadline && session.alive) {
+      await sleep(this.opts.extractStableMs);
+      let turn: ExtractedTurn | null = null;
+      try {
+        const grid = await this.fetchGridText(session.id);
+        turn = extractTurn(grid, userText);
+      } catch {
+        break;
+      }
+      if (!turn) break;
+      const cur = JSON.stringify([turn.assistant, turn.toolNotes]);
+      last = turn;
+      if (cur === prev) return last;
+      this.logger.info("Render still settling, re-polling", { sessionId: session.id });
+      prev = cur;
+    }
+    return last;
   }
 
   // Channel context restores what the SDK path provided via appendSystemPrompt:
@@ -370,6 +411,12 @@ export class WebtermRuntimeHandler {
 // close the quote, emit an escaped literal quote, reopen.
 export function shellSingleQuote(s: string): string {
   return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+// Slack mrkdwn escapes exactly three characters in message text. Decode
+// &amp; last so double-encoded input stays literal.
+export function decodeSlackEntities(s: string): string {
+  return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 }
 
 function sleep(ms: number): Promise<void> {
