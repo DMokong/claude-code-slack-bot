@@ -34,8 +34,7 @@ const CHROME_RULES: RegExp[] = [
   /^\s*─{4,}\s*$/,                                          // horizontal rules between regions
   /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+s\s*$/,       // spinner: "✻ Cooked for 3s"
   /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+ing…\s*$/,                         // spinner: "✻ Pondering…" / "· Frolicking…"
-  /^\s*Opus\s+\d/,                                           // model status row (pre-Fable)
-  /^\s*Fable\s+\d/,                                          // model status row (v2.1.173+)
+  /^\s*(Opus|Fable|Sonnet|Haiku|Mythos)\s+\d/,              // model status row (any model)
   /^\s*[●○]\s+(high|medium|low)\b/,                          // effort indicator
   /^\s*(main|master|HEAD)\s*[●◆◇]?\s*│/,                     // git branch row
   /^\s*🧠\s+/,                                                // memory ribbon
@@ -95,16 +94,24 @@ function findEchoEnd(
   return i;
 }
 
-// Identify the line index of the BOTTOM input box's empty prompt row.
-// That row is `<promptMarker>` alone (no following content). When present
-// at the bottom of the grid (surrounded by ─── rules), it bounds the turn
-// region above it. Returns -1 if not found.
+// Identify the line index of the BOTTOM input box's prompt row, which bounds
+// the turn region above it. The box is normally `<promptMarker>` alone, but
+// claude sometimes renders a dimmed contextual suggestion inside it (e.g.
+// "❯ list them out") — so we also accept a `❯ …` line that's wrapped in the
+// box's ─── rules (the structural tell that distinguishes the input box from
+// the user-echo line up in the scrollback). Returns -1 if not found.
 function findBottomPromptRow(lines: string[], promptMarker: string): number {
   const marker = promptMarker.trimEnd();  // "❯ " → "❯"
-  // Walk from the bottom upward, looking for an isolated marker.
+  const isRule = (s: string | undefined): boolean => !!s && /^\s*─{4,}\s*$/.test(s);
   for (let i = lines.length - 1; i >= 0; i--) {
     const trimmed = lines[i].trim();
     if (trimmed === marker) return i;
+    // Input box with ghost/suggestion text: a "❯ …" line sandwiched between
+    // horizontal rules. Require a rule within ~2 lines above (box top) so the
+    // scrollback user-echo line never matches.
+    if (trimmed.startsWith(marker + " ") && (isRule(lines[i - 1]) || isRule(lines[i - 2]))) {
+      return i;
+    }
   }
   return -1;
 }

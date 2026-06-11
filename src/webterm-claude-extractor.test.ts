@@ -157,6 +157,40 @@ describe("extractTurn — Fable-era TUI (claude v2.1.173, bracketed-paste input)
   });
 });
 
+describe("extractTurn — bottom-prompt boundary + model-row chrome (Sonnet-era leak, 2026-06-12)", () => {
+  // Live repro: claude showed a contextual input suggestion ("list them out")
+  // inside the bottom prompt box, so the box wasn't an isolated "❯". The
+  // boundary detector over-extended and the prompt line + "Sonnet 4.6 …"
+  // status row leaked into the delivered answer.
+  const grid = [
+    "❯ run ls and count the entries",
+    "",
+    "⏺ 39 entries in /Users/dustincheng/projects/claudeclaw.",
+    "",
+    "✻ Bunning…",
+    "────────────────────────────────────────────────────────────",
+    "❯ list them out",
+    "────────────────────────────────────────────────────────────",
+    "   Sonnet 4.6 │ ████░░░░░░ 24%/200k (1) │ $0.21 │ ⏱ 14s",
+    "   main ● │ ~/projects/claudeclaw │ v2.1.173",
+  ].join("\n");
+
+  it("does not leak the ghost-text input box into the answer", () => {
+    const turn = extractTurn(grid, "run ls and count the entries");
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).toBe("39 entries in /Users/dustincheng/projects/claudeclaw.");
+    expect(turn!.assistant).not.toContain("list them out");
+    expect(turn!.assistant).not.toContain("Sonnet 4.6");
+  });
+
+  it("filters the Sonnet/Haiku model status row as chrome", () => {
+    const g = ["❯ hi", "", "⏺ hello", "", "   Sonnet 4.6 │ 24%/200k │ $0.21 │ ⏱ 2s"].join("\n");
+    expect(extractTurn(g, "hi")!.assistant).toBe("hello");
+    const h = ["❯ hi", "", "⏺ hello", "", "   Haiku 4.5 │ 1%/200k │ $0.00 │ ⏱ 1s"].join("\n");
+    expect(extractTurn(h, "hi")!.assistant).toBe("hello");
+  });
+});
+
 describe("extractActivity — live turn status", () => {
   it("reports a spinner with elapsed seconds as 'thinking'", () => {
     const grid = ["❯ hi", "", "✻ Crunched for 7s", "", "──────", "❯", "──────"].join("\n");
