@@ -21,6 +21,35 @@ unchanged until you set `WEBTERM_CHANNELS`.
 | Compensating retry on extractor null | Multi-user concurrency hardening |
 | In-memory thread→session map | webterm launchd supervisor — must start by hand |
 
+## API authentication (claw-yv02 / claw-0bfv)
+
+The webterm API requires a **bearer token** and enforces a **Host allowlist**
+(loopback only) on every request — closing the zero-auth RCE and the
+DNS-rebinding drive-by. This is **fail-closed and automatic**:
+
+- On boot the server resolves the token from `WEBTERM_TOKEN` env, else an
+  existing `~/.webterm/token`, else it **generates one and writes it** there
+  (mode 0600). No manual setup.
+- Every local client reads the same token: the **bot** and **healthcheck** via
+  `WEBTERM_TOKEN` env or `~/.webterm/token`; the **Vite UI** injects it at the
+  proxy layer (the browser never sees it) and uses `changeOrigin` so proxied
+  requests pass the Host allowlist; the **CLI** reads it for REST + WS.
+- `/api/health` is exempt from the token (still Host-gated) so liveness probes
+  work unauthenticated.
+- Escape hatch: `WEBTERM_AUTH=off` disables auth entirely (only for an isolated
+  deployment where the network already isolates the port).
+
+Quick verify after a restart (expect `401`, then `200`, then `403`):
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:7681/api/sessions          # 401
+T=$(cat ~/.webterm/token)
+curl -s -o /dev/null -w "%{http_code}\n" -H "Authorization: Bearer $T" http://127.0.0.1:7681/api/sessions  # 200
+curl -s -o /dev/null -w "%{http_code}\n" -H "Host: evil.com" http://127.0.0.1:7681/api/health             # 403
+```
+
+Restart order after a token change or fresh deploy: **server → UI → bot** (the
+server writes the token; the UI and bot read it at startup).
+
 ## Prerequisites
 
 1. **webterm running** on the configured URL with the `prompt-ready` SSE event.
