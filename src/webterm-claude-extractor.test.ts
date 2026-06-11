@@ -219,6 +219,23 @@ describe("extractTurn — bottom-prompt boundary + model-row chrome (Sonnet-era 
     expect(turn!.assistant).not.toContain("push this");
   });
 
+  it("hard-stops on the NON-BREAKING space the box actually uses (live root cause)", () => {
+    const NBSP = " ";
+    // claude renders "❯ <suggestion>", not "❯ <suggestion>" — this is what
+    // leaked 'list them out' / 'now run it' / 'push this' into live answers.
+    const g = [
+      "❯ count files",
+      "",
+      "⏺ There are 39 entries in the current directory.",
+      "",
+      `❯${NBSP}what files are untracked`,
+    ].join("\n");
+    const turn = extractTurn(g, "count files");
+    expect(turn!.assistant).toBe("There are 39 entries in the current directory.");
+    expect(turn!.assistant).not.toContain("what files are untracked");
+    expect(turn!.assistant).not.toContain("❯");
+  });
+
   it("hard-stops at an empty input box (isolated ❯) mid-render", () => {
     const g = ["❯ hi", "", "⏺ hello world", "", "❯"].join("\n");
     expect(extractTurn(g, "hi")!.assistant).toBe("hello world");

@@ -54,6 +54,17 @@ function isRule(line: string | undefined): boolean {
   return !!line && HORIZONTAL_RULE_RE.test(line);
 }
 
+// True if `t` (already trimmed) is the input-box prompt line: a bare "❯" or
+// "❯" followed by whitespace + dimmed suggestion text. CRITICAL: claude renders
+// a NON-BREAKING SPACE (U+00A0) after the marker in the box, not a regular
+// space, so the suggestion text leaked past naive `"❯ "` checks.
+function isPromptLine(t: string, bareMarker: string): boolean {
+  if (t === bareMarker) return true;
+  if (!t.startsWith(bareMarker)) return false;
+  const next = t.charCodeAt(bareMarker.length);
+  return next === 0x20 || next === 0xa0 || next === 0x09; // space | NBSP | tab
+}
+
 // Locate where the bottom UI footer begins — the robust turn boundary. The
 // footer is always: [spinner] ─── / ❯[ + maybe a dimmed contextual suggestion,
 // possibly wrapped] / ─── / model-status-row / git / memory / permissions. The
@@ -129,14 +140,13 @@ function findEchoEnd(
 // the user-echo line up in the scrollback). Returns -1 if not found.
 function findBottomPromptRow(lines: string[], promptMarker: string): number {
   const marker = promptMarker.trimEnd();  // "❯ " → "❯"
-  const isRule = (s: string | undefined): boolean => !!s && /^\s*─{4,}\s*$/.test(s);
   for (let i = lines.length - 1; i >= 0; i--) {
     const trimmed = lines[i].trim();
     if (trimmed === marker) return i;
-    // Input box with ghost/suggestion text: a "❯ …" line sandwiched between
-    // horizontal rules. Require a rule within ~2 lines above (box top) so the
-    // scrollback user-echo line never matches.
-    if (trimmed.startsWith(marker + " ") && (isRule(lines[i - 1]) || isRule(lines[i - 2]))) {
+    // Input box with ghost/suggestion text (note: claude uses a NON-BREAKING
+    // space after the marker). Require a ─── rule within ~2 lines above (box
+    // top) so the scrollback user-echo line never matches.
+    if (isPromptLine(trimmed, marker) && (isRule(lines[i - 1]) || isRule(lines[i - 2]))) {
       return i;
     }
   }
@@ -223,7 +233,7 @@ export function extractTurn(
     // This is the backstop when the footer wasn't fully rendered at extraction
     // (claude's dimmed input suggestion is dynamic and can leak otherwise).
     const t = line.trim();
-    if (t === bareMarker || t.startsWith(bareMarker + " ")) break;
+    if (isPromptLine(t, bareMarker)) break;
     if (isChrome(line)) continue;
     if (line.startsWith(assistantMarker)) {
       inAssistant = true;
