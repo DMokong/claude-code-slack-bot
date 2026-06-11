@@ -180,13 +180,21 @@ export class SlackHandler {
       this.webtermRuntime &&
       text &&
       (!files || files.length === 0) &&
-      (config.webterm.routeAll || config.webterm.channels.includes(channel))
+      (config.webterm.routeAll || config.webterm.channels.includes(channel)) &&
+      // Bot-level commands (cwd set/get, mcp info/reload) must fall through
+      // to their handlers below — routeAll was swallowing them into claude.
+      !this.workingDirManager.parseSetCommand(text) &&
+      !this.workingDirManager.isGetCommand(text) &&
+      !this.isMcpInfoCommand(text) &&
+      !this.isMcpReloadCommand(text)
     ) {
+      const isDM = channel.startsWith('D');
       this.logger.debug('Routing to webterm runtime', { channel, thread_ts: thread_ts || ts });
       await this.webtermRuntime.handleMessage({
         channelId: channel,
         threadTs: thread_ts || ts,
         text,
+        cwd: this.workingDirManager.getWorkingDirectory(channel, thread_ts, isDM ? user : undefined),
         slack: this.app.client,
       });
       return;

@@ -44,6 +44,11 @@ const DEFAULT_IDLE_REAP_MS = 30 * 60_000;
 const DEFAULT_REAP_INTERVAL_MS = 5 * 60_000;
 const BOOT_TIMEOUT_MS = 60_000;
 const TURN_TIMEOUT_MS = 180_000;
+// claude's first-run "trust this folder" dialog (claw-g790). It blocks the
+// REPL, --dangerously-skip-permissions does NOT bypass it, and it's
+// grid-stable so prompt-ready fires ON it. Detected at boot and accepted
+// (option 1 is pre-selected; Enter confirms). Text captured live v2.1.173.
+const TRUST_DIALOG_RE = /Is this a project you created or one you trust|Yes, I trust this folder/;
 // Compensating control for claw-etj7: extractor returns null on no-⏺-block
 // (premature prompt-ready). Retry up to N times before giving up.
 const FALSE_POSITIVE_MAX_RETRIES = 3;
@@ -78,6 +83,9 @@ export interface HandleMessageOpts {
   channelId: string;
   threadTs: string | undefined;
   text: string;
+  // Per-thread working directory (from WorkingDirectoryManager); falls back
+  // to the handler-level default cwd.
+  cwd?: string;
   slack: Pick<WebClient, "chat">;
 }
 
@@ -140,7 +148,7 @@ export class WebtermRuntimeHandler {
       // De-dupe concurrent first-message creations for the same thread.
       let creation = this.creationInFlight.get(key);
       if (!creation) {
-        creation = this.adoptOrCreateSession(key, req.channelId, req.threadTs)
+        creation = this.adoptOrCreateSession(key, req.channelId, req.threadTs, req.cwd)
           .then((s) => {
             this.sessions.set(key, s);
             return s;
@@ -256,6 +264,24 @@ export class WebtermRuntimeHandler {
     return last;
   }
 
+  // Wait for the boot prompt-ready, but verify the grid is actually the
+  // claude prompt — the trust-folder dialog is grid-stable too, and typing
+  // a user message into it was claw-akpn's lost-turn bug. Accept dialogs
+  // (Enter confirms the pre-selected "Yes, I trust this folder") until the
+  // real prompt appears or the boot deadline passes.
+  private async completeBootHandshake(session: WebtermSession): Promise<void> {
+    const deadline = Date.now() + BOOT_TIMEOUT_MS;
+    let target = 1;
+    for (;;) {
+      await this.waitForPromptReady(session, target, Math.max(1, deadline - Date.now()));
+      const grid = await this.fetchGridText(session.id);
+      if (!TRUST_DIALOG_RE.test(grid)) return;
+      this.logger.info("Trust-folder dialog at boot — accepting", { sessionId: session.id });
+      await this.sendKeys(session.id, ["Enter"]);
+      target = session.promptReadyCount + 1;
+    }
+  }
+
   // Channel context restores what the SDK path provided via appendSystemPrompt:
   // claude inside the REPL knows which channel it's serving and can pick up
   // channel-specific protocols from CLAUDE.md (e.g. #cc-ai discourse mode).
@@ -272,10 +298,11 @@ export class WebtermRuntimeHandler {
     threadKey: string,
     channelId: string,
     threadTs: string | undefined,
+    cwd?: string,
   ): Promise<WebtermSession> {
     const adopted = await this.tryAdoptSession(threadKey);
     if (adopted) return adopted;
-    return this.createSession(threadKey, channelId, threadTs);
+    return this.createSession(threadKey, channelId, threadTs, cwd);
   }
 
   // Sweep ALL slack-bot-titled sessions in webterm (not just mapped ones, so
@@ -354,6 +381,7 @@ export class WebtermRuntimeHandler {
     threadKey: string,
     channelId: string,
     threadTs: string | undefined,
+    cwd?: string,
   ): Promise<WebtermSession> {
     const res = await this.opts.fetchImpl(`${this.opts.webtermUrl}/api/sessions`, {
       method: "POST",
@@ -362,7 +390,7 @@ export class WebtermRuntimeHandler {
         title: `slack-bot ${threadKey}`,
         cols: this.opts.cols,
         rows: this.opts.rows,
-        cwd: this.opts.cwd,
+        cwd: cwd ?? this.opts.cwd,
       }),
     });
     if (!res.ok) throw new Error(`createSession ${res.status}: ${await res.text()}`);
@@ -381,7 +409,7 @@ export class WebtermRuntimeHandler {
     // Boot claude inside the session.
     await this.sendInput(session.id, this.buildBootCmd(channelId, threadTs));
     try {
-      await this.waitForPromptReady(session, 1, BOOT_TIMEOUT_MS);
+      await this.completeBootHandshake(session);
     } catch (err) {
       sseAbort.abort();
       await this.killWebtermSession(session.id).catch(() => {});
@@ -450,12 +478,16 @@ export class WebtermRuntimeHandler {
     // Wait out claude's paste-aggregation window before Enter, or the
     // submit keystroke is swallowed into the paste (see DEFAULT_PASTE_SETTLE_MS).
     if (opts.settleMs) await sleep(opts.settleMs);
-    const enter = await this.opts.fetchImpl(base, {
+    await this.sendKeys(sessionId, ["Enter"]);
+  }
+
+  private async sendKeys(sessionId: string, keys: string[]): Promise<void> {
+    const res = await this.opts.fetchImpl(`${this.opts.webtermUrl}/api/sessions/${sessionId}/input`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "keys", keys: ["Enter"] }),
+      body: JSON.stringify({ kind: "keys", keys }),
     });
-    if (!enter.ok && enter.status !== 204) throw new Error(`sendInput enter ${enter.status}`);
+    if (!res.ok && res.status !== 204) throw new Error(`sendKeys ${res.status}`);
   }
 
   private async fetchGridText(sessionId: string): Promise<string> {

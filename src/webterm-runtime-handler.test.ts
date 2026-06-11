@@ -457,6 +457,72 @@ describe("WebtermRuntimeHandler", () => {
     expect(slack.posted[0].text).toContain("yes on both");
   });
 
+  it("accepts the trust-folder dialog at boot and continues to the prompt (claw-g790)", async () => {
+    // Captured live 2026-06-11 from claude v2.1.173 in an untrusted cwd. The
+    // dialog is grid-stable, so prompt-ready fires ON it — without detection,
+    // turn 1 would be typed into the dialog.
+    const TRUST_DIALOG_GRID = [
+      "claude --dangerously-skip-permissions",
+      " Accessing workspace:",
+      "",
+      " /tmp/proj-x",
+      "",
+      " Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source",
+      " project, or work from your team). If not, take a moment to review what's in this folder first.",
+      "",
+      " ❯ 1. Yes, I trust this folder",
+      "   2. No, exit",
+      "",
+      " Enter to confirm · Esc to cancel",
+    ].join("\n");
+
+    const req = { channelId: "C1", threadTs: "T1", text: "hello new project", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+
+    // Boot lands on the trust dialog; prompt-ready fires on the stable dialog.
+    mock.setText(id, TRUST_DIALOG_GRID);
+    mock.emitPromptReady(id);
+
+    // The handler must accept it (a lone Enter, inputs[2] after boot cmd+Enter)…
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 3);
+    expect(mock.sessions.get(id)!.inputs[2]).toEqual({ kind: "keys", keys: ["Enter"] });
+
+    // …then claude boots for real.
+    mock.setText(id, buildBootGrid());
+    mock.emitPromptReady(id);
+
+    // Turn proceeds normally afterwards.
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 5);
+    expect(mock.sessions.get(id)!.inputs[3]).toEqual({ kind: "paste", data: "hello new project" });
+    mock.setText(id, buildTurnGrid("hello new project", "trusted and ready"));
+    mock.emitPromptReady(id);
+    await p;
+    expect(slack.posted[0].text).toContain("trusted and ready");
+  });
+
+  it("passes the per-thread working directory into session creation (claw-g790)", async () => {
+    const req = {
+      channelId: "C1",
+      threadTs: "T1",
+      text: "hi",
+      cwd: "/tmp/proj-x",
+      slack: slack.client,
+    };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    mock.setText(id, buildTurnGrid("hi", "in proj-x"));
+    mock.emitPromptReady(id);
+    await p;
+
+    const create = mock.calls.find((c) => c.method === "POST" && c.url.endsWith("/api/sessions"));
+    expect(create!.body.cwd).toBe("/tmp/proj-x");
+  });
+
   it("shutdown() leaves webterm sessions alive for adoption after restart (claw-usdo)", async () => {
     const req = { channelId: "C1", threadTs: "T1", text: "hi", slack: slack.client };
     const p = handler.handleMessage(req);
