@@ -183,6 +183,35 @@ describe("extractTurn — bottom-prompt boundary + model-row chrome (Sonnet-era 
     expect(turn!.assistant).not.toContain("Sonnet 4.6");
   });
 
+  it("stops the answer at the footer — excludes the new '※ recap' block (live 2026-06-12)", () => {
+    const NBSP = " ";
+    const g = [
+      "❯ count to 10 then give me a joke",
+      "",
+      "⏺ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ✅",
+      "",
+      "  Why did the developer quit their job?",
+      "",
+      "  Because they didn't get arrays. 🥁",
+      "",
+      "✻ Crunched for 2s",
+      "",
+      "※ recap: We've just been exchanging casual greetings and jokes — no active work in progress. Pick up whenever you're",
+      "  ready! (disable recaps in /config)",
+      "",
+      "────────────────────────────────────────────────────────────",
+      `❯${NBSP}another joke`,
+      "────────────────────────────────────────────────────────────",
+      "   Sonnet 4.6 │ 26%/200k (3) │ $0.43 │ ⏱ 5h13m",
+    ].join("\n");
+    const turn = extractTurn(g, "count to 10 then give me a joke");
+    expect(turn!.assistant).toContain("Because they didn't get arrays. 🥁");
+    expect(turn!.assistant).not.toContain("recap");
+    expect(turn!.assistant).not.toContain("another joke");
+    expect(turn!.assistant).not.toContain("❯");
+    expect(turn!.assistant).not.toContain("Sonnet");
+  });
+
   it("handles a ghost suggestion that wraps onto multiple box lines", () => {
     const g = [
       "❯ summarize the repo",

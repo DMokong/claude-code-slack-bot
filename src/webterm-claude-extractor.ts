@@ -65,6 +65,15 @@ function isPromptLine(t: string, bareMarker: string): boolean {
   return next === 0x20 || next === 0xa0 || next === 0x09; // space | NBSP | tab
 }
 
+const SPINNER_FOR_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+s$/;
+const SPINNER_VERB_END_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+…$/;
+// True if `t` (trimmed) is the first line of the post-answer footer: the
+// spinner ("✻ Cooked for 3s" / "✶ Pouncing…") or claude's "※ recap" block.
+// Used to end the answer region the moment the footer begins.
+function isAnswerEnd(t: string): boolean {
+  return t.startsWith("※") || SPINNER_FOR_RE.test(t) || SPINNER_VERB_END_RE.test(t);
+}
+
 // Locate where the bottom UI footer begins — the robust turn boundary. The
 // footer is always: [spinner] ─── / ❯[ + maybe a dimmed contextual suggestion,
 // possibly wrapped] / ─── / model-status-row / git / memory / permissions. The
@@ -234,6 +243,11 @@ export function extractTurn(
     // (claude's dimmed input suggestion is dynamic and can leak otherwise).
     const t = line.trim();
     if (isPromptLine(t, bareMarker)) break;
+    // Once the answer has started, the FIRST footer marker (spinner or the
+    // new "※ recap" block) ends it — everything below is chrome/footer, no
+    // matter what dynamic content claude renders there. This is what keeps the
+    // recap, ghost suggestions, and status rows out of the answer robustly.
+    if (inAssistant && isAnswerEnd(t)) break;
     if (isChrome(line)) continue;
     if (line.startsWith(assistantMarker)) {
       inAssistant = true;
