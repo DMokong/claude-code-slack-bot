@@ -183,6 +183,26 @@ describe("extractTurn — bottom-prompt boundary + model-row chrome (Sonnet-era 
     expect(turn!.assistant).not.toContain("Sonnet 4.6");
   });
 
+  it("handles a ghost suggestion that wraps onto multiple box lines", () => {
+    const g = [
+      "❯ summarize the repo",
+      "",
+      "⏺ It's a personal AI agent workspace.",
+      "",
+      "✻ Cogitated for 9s",
+      "────────────────────────────────────────────────────────────",
+      "❯ now run it in the real bot and confirm it works end to end with a much longer",
+      "  suggestion that wrapped onto a second line inside the box",
+      "────────────────────────────────────────────────────────────",
+      "   Sonnet 4.6 │ 24%/200k │ $0.20 │ ⏱ 9s",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+    ].join("\n");
+    const turn = extractTurn(g, "summarize the repo");
+    expect(turn!.assistant).toBe("It's a personal AI agent workspace.");
+    expect(turn!.assistant).not.toContain("now run it");
+    expect(turn!.assistant).not.toContain("wrapped onto");
+  });
+
   it("filters the Sonnet/Haiku model status row as chrome", () => {
     const g = ["❯ hi", "", "⏺ hello", "", "   Sonnet 4.6 │ 24%/200k │ $0.21 │ ⏱ 2s"].join("\n");
     expect(extractTurn(g, "hi")!.assistant).toBe("hello");

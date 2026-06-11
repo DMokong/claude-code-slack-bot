@@ -48,6 +48,33 @@ function isChrome(line: string): boolean {
   return CHROME_RULES.some((re) => re.test(line));
 }
 
+const HORIZONTAL_RULE_RE = /^\s*─{4,}\s*$/;
+const MODEL_ROW_RE = /^\s*(Opus|Fable|Sonnet|Haiku|Mythos)\s+\d/;
+function isRule(line: string | undefined): boolean {
+  return !!line && HORIZONTAL_RULE_RE.test(line);
+}
+
+// Locate where the bottom UI footer begins — the robust turn boundary. The
+// footer is always: [spinner] ─── / ❯[ + maybe a dimmed contextual suggestion,
+// possibly wrapped] / ─── / model-status-row / git / memory / permissions. The
+// model-status row is the reliable anchor (always present); we walk up past the
+// input box's two ─── rules and cut at the TOP one — so whatever variable text
+// claude renders inside the prompt box stays out of the answer. Returns -1 if
+// there's no footer yet (mid-render), letting the caller fall back.
+function findFooterStart(lines: string[]): number {
+  let model = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (MODEL_ROW_RE.test(lines[i])) { model = i; break; }
+  }
+  if (model === -1) return -1;
+  let i = model - 1;
+  while (i >= 0 && !isRule(lines[i])) i--;   // box bottom rule
+  if (i < 0) return -1;
+  i--;
+  while (i >= 0 && !isRule(lines[i])) i--;   // box top rule (skip ❯ + wrapped suggestion)
+  return i; // -1 if not found → caller falls back
+}
+
 // Locate the most recent occurrence of `<promptMarker><userText>` in `lines`,
 // allowing for trailing whitespace (the headless grid right-pads rows).
 // Returns the line index, or -1 if not found.
@@ -170,12 +197,19 @@ export function extractTurn(
   if (echoStart === -1) return null;
   const echoEnd = findEchoEnd(lines, echoStart, userInputText, promptMarker);
 
-  // The turn region ends at the bottom input box (if present), else at the
-  // end of the grid. We pick the bottom prompt row only if it's BELOW the
-  // echo we just identified — otherwise the grid has scrolled and the echo
-  // we matched is the bottom row.
-  const bottomRow = findBottomPromptRow(lines, promptMarker);
-  const turnEnd = bottomRow > echoEnd ? bottomRow : lines.length;
+  // The turn region ends at the bottom UI footer. Prefer the footer anchored
+  // on the model-status row (robust to whatever claude renders in the input
+  // box); fall back to the isolated-prompt detector, then to end-of-grid. All
+  // candidates must be BELOW the echo, else the grid scrolled and the echo we
+  // matched is itself at the bottom.
+  const footerStart = findFooterStart(lines);
+  let turnEnd: number;
+  if (footerStart > echoEnd) {
+    turnEnd = footerStart;
+  } else {
+    const bottomRow = findBottomPromptRow(lines, promptMarker);
+    turnEnd = bottomRow > echoEnd ? bottomRow : lines.length;
+  }
 
   const toolNotes: string[] = [];
   const assistantRaw: string[] = [];
