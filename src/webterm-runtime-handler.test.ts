@@ -12,6 +12,7 @@ function makeMockWebterm() {
     text: string;
     title?: string;
     alive?: boolean;
+    lastActivityAt?: number;
   }>();
   const calls: { method: string; url: string; body?: any }[] = [];
 
@@ -32,6 +33,7 @@ function makeMockWebterm() {
         id,
         title: s.title ?? "",
         alive: s.alive !== false,
+        lastActivityAt: s.lastActivityAt ?? Date.now(),
         cols: 120,
         rows: 40,
       }));
@@ -99,8 +101,8 @@ function makeMockWebterm() {
       if (!s) throw new Error(`no session ${sessionId}`);
       s.text = text;
     },
-    seedSession(id: string, title: string, text: string) {
-      sessions.set(id, { sseController: null, inputs: [], text, title, alive: true });
+    seedSession(id: string, title: string, text: string, lastActivityAt?: number) {
+      sessions.set(id, { sseController: null, inputs: [], text, title, alive: true, lastActivityAt });
     },
     onlySessionId() {
       const ids = Array.from(sessions.keys());
@@ -538,6 +540,61 @@ describe("WebtermRuntimeHandler", () => {
     expect(slack.posted[0].text).toContain("fresh session here");
     // The dead-claude session was cleaned up.
     expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes("sess-dead-claude"))).toBeTruthy();
+  });
+});
+
+describe("idle session reaping (claw-9nvw)", () => {
+  let mock: ReturnType<typeof makeMockWebterm>;
+  let handler: WebtermRuntimeHandler;
+
+  beforeEach(() => {
+    mock = makeMockWebterm();
+    handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local",
+      fetchImpl: mock.fetchImpl,
+      cwd: "/tmp/test",
+      pasteSettleMs: 5,
+      extractStableMs: 10,
+      idleReapMs: 60_000,
+      reapIntervalMs: 0, // timer off — tests drive reapIdleSessions() directly
+    });
+  });
+
+  it("reaps slack-bot sessions idle past the threshold, including unmapped orphans", async () => {
+    mock.seedSession("sess-stale", "slack-bot C1::Told", buildBootGrid(), Date.now() - 120_000);
+    mock.seedSession("sess-fresh", "slack-bot C1::Tnew", buildBootGrid(), Date.now() - 5_000);
+
+    const reaped = await handler.reapIdleSessions();
+
+    expect(reaped).toBe(1);
+    expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes("sess-stale"))).toBeTruthy();
+    expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes("sess-fresh"))).toBeUndefined();
+  });
+
+  it("never reaps sessions that are not slack-bot titled", async () => {
+    mock.seedSession("sess-user", "my interactive terminal", buildBootGrid(), Date.now() - 999_999);
+    expect(await handler.reapIdleSessions()).toBe(0);
+    expect(mock.calls.find((c) => c.method === "DELETE")).toBeUndefined();
+  });
+
+  it("removes reaped sessions from the local map so the next message recreates", async () => {
+    const slack = makeSlack();
+    // Establish a mapped session via a normal turn.
+    const p = handler.handleMessage({ channelId: "C1", threadTs: "T1", text: "hi", slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    mock.setText(id, buildTurnGrid("hi", "hello"));
+    mock.emitPromptReady(id);
+    await p;
+    expect(handler._sessionCount()).toBe(1);
+
+    // Make it stale and reap.
+    mock.sessions.get(id)!.lastActivityAt = Date.now() - 120_000;
+    expect(await handler.reapIdleSessions()).toBe(1);
+    expect(handler._sessionCount()).toBe(0);
+    expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes(id))).toBeTruthy();
   });
 });
 

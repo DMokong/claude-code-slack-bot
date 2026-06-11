@@ -36,6 +36,12 @@ const DEFAULT_PASTE_SETTLE_MS = 1_000;
 // until two consecutive snapshots match before posting.
 const DEFAULT_EXTRACT_STABLE_MS = 1_500;
 const RENDER_SETTLE_DEADLINE_MS = 120_000;
+// Sessions persist across restarts now (title adoption), so nothing else
+// cleans them up — reap slack-bot sessions silent past the idle threshold.
+// The conversation is lost but the next message recreates the session;
+// acceptable until `--resume` lands.
+const DEFAULT_IDLE_REAP_MS = 30 * 60_000;
+const DEFAULT_REAP_INTERVAL_MS = 5 * 60_000;
 const BOOT_TIMEOUT_MS = 60_000;
 const TURN_TIMEOUT_MS = 180_000;
 // Compensating control for claw-etj7: extractor returns null on no-⏺-block
@@ -50,6 +56,9 @@ export interface WebtermRuntimeOpts {
   rows?: number;
   pasteSettleMs?: number;
   extractStableMs?: number;
+  idleReapMs?: number;
+  // 0 disables the timer (tests drive reapIdleSessions() directly).
+  reapIntervalMs?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -85,6 +94,7 @@ export class WebtermRuntimeHandler {
   private creationInFlight = new Map<string, Promise<WebtermSession>>();
   private logger = new Logger("WebtermRuntime");
   private opts: InternalOpts;
+  private reapTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: WebtermRuntimeOpts = {}) {
     this.opts = {
@@ -95,8 +105,20 @@ export class WebtermRuntimeHandler {
       rows: opts.rows ?? DEFAULT_ROWS,
       pasteSettleMs: opts.pasteSettleMs ?? DEFAULT_PASTE_SETTLE_MS,
       extractStableMs: opts.extractStableMs ?? DEFAULT_EXTRACT_STABLE_MS,
+      idleReapMs: opts.idleReapMs ?? DEFAULT_IDLE_REAP_MS,
+      reapIntervalMs: opts.reapIntervalMs ?? DEFAULT_REAP_INTERVAL_MS,
       fetchImpl: opts.fetchImpl ?? fetch,
     };
+    if (this.opts.reapIntervalMs > 0) {
+      this.reapTimer = setInterval(() => {
+        void this.reapIdleSessions().catch((err) => {
+          this.logger.error("Idle reap sweep failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }, this.opts.reapIntervalMs);
+      this.reapTimer.unref?.();
+    }
   }
 
   threadKey(channelId: string, threadTs: string | undefined): string {
@@ -254,6 +276,36 @@ export class WebtermRuntimeHandler {
     const adopted = await this.tryAdoptSession(threadKey);
     if (adopted) return adopted;
     return this.createSession(threadKey, channelId, threadTs);
+  }
+
+  // Sweep ALL slack-bot-titled sessions in webterm (not just mapped ones, so
+  // orphans from dead threads get cleaned too). Returns the reap count.
+  async reapIdleSessions(): Promise<number> {
+    let list: { id: string; title?: string; alive?: boolean; lastActivityAt?: number }[];
+    const res = await this.opts.fetchImpl(`${this.opts.webtermUrl}/api/sessions`);
+    if (!res.ok) throw new Error(`reap: list sessions ${res.status}`);
+    list = (await res.json()) as typeof list;
+    const cutoff = Date.now() - this.opts.idleReapMs;
+    let reaped = 0;
+    for (const s of list) {
+      if (!s.title?.startsWith("slack-bot ")) continue;
+      if ((s.lastActivityAt ?? Date.now()) > cutoff) continue;
+      const threadKey = s.title.slice("slack-bot ".length);
+      const local = this.sessions.get(threadKey);
+      if (local?.inFlight) continue; // never reap mid-turn
+      if (local) {
+        local.sseAbort.abort();
+        this.sessions.delete(threadKey);
+      }
+      await this.killWebtermSession(s.id).catch(() => {});
+      this.logger.info("Reaped idle webterm session", {
+        sessionId: s.id,
+        threadKey,
+        idleMs: Date.now() - (s.lastActivityAt ?? 0),
+      });
+      reaped++;
+    }
+    return reaped;
   }
 
   // A surviving session from a previous bot process carries the conversation —
@@ -450,6 +502,10 @@ export class WebtermRuntimeHandler {
   // the next bot process adopts them by title (claw-usdo). killSessions: true
   // is for explicit decommissioning.
   async shutdown(opts: { killSessions?: boolean } = {}): Promise<void> {
+    if (this.reapTimer) {
+      clearInterval(this.reapTimer);
+      this.reapTimer = null;
+    }
     const tasks: Promise<void>[] = [];
     for (const session of this.sessions.values()) {
       session.sseAbort.abort();
