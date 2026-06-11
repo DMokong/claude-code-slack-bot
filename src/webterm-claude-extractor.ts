@@ -220,3 +220,55 @@ export function formatTurnForSlack(turn: ExtractedTurn): string {
   if (turn.assistant) parts.push(turn.assistant);
   return parts.join("\n\n");
 }
+
+// ---- live-turn activity (for streaming status to Slack) ----
+//
+// The webterm path is request/response, so there's no token stream. But the
+// grid exposes claude's live state the whole time it works: a spinner line
+// ("✻ Crunched for 3s", "✶ Pouncing…") and tool-call markers ("⏺ Bash(…)").
+// extractActivity turns the CURRENT grid into a short human status so the bot
+// can chat.update a placeholder message while the turn runs.
+
+const SPINNER_GLYPHS = "✻✶✳✢✽⠂⠐⠈⠁·";
+const SPINNER_ELAPSED_RE = new RegExp(`^[${SPINNER_GLYPHS}]\\s+\\S+\\s+for\\s+(\\d+)s$`);
+const SPINNER_VERB_RE = new RegExp(`^[${SPINNER_GLYPHS}]\\s+(\\S+…)$`);
+// Tool-call line: "⏺ Bash(…)" — a capitalized tool name immediately followed
+// by "(". Distinct from the assistant-response "⏺ <prose>" (no Name( shape).
+const TOOL_CALL_RE = /^⏺\s+([A-Z][A-Za-z0-9_]*)\(/;
+
+const TOOL_LABELS: Record<string, string> = {
+  Bash: "🔧 running a command",
+  Read: "📖 reading a file",
+  Edit: "✏️ editing",
+  MultiEdit: "✏️ editing",
+  Write: "✏️ writing a file",
+  Grep: "🔎 searching the code",
+  Glob: "🔎 finding files",
+  Task: "🤖 running a subagent",
+  WebFetch: "🌐 fetching a page",
+  WebSearch: "🌐 searching the web",
+  TodoWrite: "📝 planning",
+};
+
+// Returns a short status label for the in-progress turn, or null if the grid
+// shows no recognizable activity yet. Tool activity wins over the spinner
+// (more informative); the most recent tool in the grid is reported.
+export function extractActivity(gridText: string): string | null {
+  const lines = gridText.split("\n");
+  let tool: string | null = null;
+  let elapsed: number | null = null;
+  let verb: string | null = null;
+  for (const raw of lines) {
+    const line = raw.trim();
+    const t = TOOL_CALL_RE.exec(line);
+    if (t) { tool = t[1]; continue; }
+    const e = SPINNER_ELAPSED_RE.exec(line);
+    if (e) { elapsed = Number(e[1]); continue; }
+    const v = SPINNER_VERB_RE.exec(line);
+    if (v) { verb = v[1]; continue; }
+  }
+  if (tool) return `${TOOL_LABELS[tool] ?? `🔧 ${tool}`}…`;
+  if (elapsed !== null) return `✻ thinking… (${elapsed}s)`;
+  if (verb) return `✻ ${verb}`;
+  return null;
+}

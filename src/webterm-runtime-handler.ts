@@ -16,7 +16,7 @@
 
 import type { WebClient } from "@slack/web-api";
 import { Logger } from "./logger";
-import { extractTurn, formatTurnForSlack, type ExtractedTurn } from "./webterm-claude-extractor";
+import { extractTurn, formatTurnForSlack, extractActivity, type ExtractedTurn } from "./webterm-claude-extractor";
 
 const DEFAULT_WEBTERM_URL = "http://127.0.0.1:7681";
 const DEFAULT_CLAUDE_CMD = "claude --dangerously-skip-permissions";
@@ -56,6 +56,15 @@ const CLAUDE_CHROME_RE = /(Opus|Fable|Sonnet|Haiku)\s+\d/;
 // Compensating control for claw-etj7: extractor returns null on no-⏺-block
 // (premature prompt-ready). Retry up to N times before giving up.
 const FALSE_POSITIVE_MAX_RETRIES = 3;
+// Live-activity status (claw-1ta5): the webterm path has no token stream, so to
+// restore the SDK path's "working… / running a tool…" feedback we post a
+// placeholder, update it with claude's live grid activity while the turn runs,
+// then resolve the SAME message into the final answer.
+const STATUS_PLACEHOLDER = "_🐾 on it…_";
+const DEFAULT_STATUS_POLL_MS = 2_000;
+// Floor between status updates — keeps us well under Slack's chat.update rate
+// limit even on long tool-heavy turns.
+const MIN_STATUS_UPDATE_MS = 1_500;
 
 export interface WebtermRuntimeOpts {
   webtermUrl?: string;
@@ -71,6 +80,13 @@ export interface WebtermRuntimeOpts {
   // Bearer token for the webterm API (claw-yv02). When set, every API call
   // carries Authorization: Bearer <token>.
   token?: string;
+  // Stream live-activity status to Slack during a turn (claw-1ta5). When on
+  // AND the Slack client supports chat.update, the turn posts a placeholder,
+  // updates it with claude's grid activity, and resolves it into the answer.
+  // Default off so the simple post-final-message path (and its tests) are
+  // unchanged; enabled in production via slack-handler.
+  streamStatus?: boolean;
+  statusPollMs?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -129,6 +145,8 @@ export class WebtermRuntimeHandler {
       idleReapMs: opts.idleReapMs ?? DEFAULT_IDLE_REAP_MS,
       reapIntervalMs: opts.reapIntervalMs ?? DEFAULT_REAP_INTERVAL_MS,
       token: opts.token ?? "",
+      streamStatus: opts.streamStatus ?? false,
+      statusPollMs: opts.statusPollMs ?? DEFAULT_STATUS_POLL_MS,
       fetchImpl: opts.fetchImpl ?? fetch,
     };
     const baseFetch = this.opts.fetchImpl;
@@ -241,6 +259,23 @@ export class WebtermRuntimeHandler {
   }
 
   private async takeTurn(session: WebtermSession, req: HandleMessageOpts): Promise<void> {
+    // Live-activity status (claw-1ta5): post a placeholder we'll keep updating
+    // with claude's progress, then resolve into the answer. If streaming is off
+    // or the placeholder post fails, statusTs is undefined and we just post the
+    // final message the old way.
+    const statusTs = this.streamEnabled(req) ? await this.postStatusPlaceholder(req) : undefined;
+    const statusCtl = { cancelled: false };
+    const statusLoop = statusTs
+      ? this.runStatusLoop(session, req, statusTs, statusCtl)
+      : Promise.resolve();
+    // Stop the status loop and DRAIN any in-flight update before delivering the
+    // final text, so the answer is always the last write to the message.
+    const stopStatus = async () => {
+      statusCtl.cancelled = true;
+      await statusLoop.catch(() => {});
+    };
+    const deliver = (text: string) => this.deliverReply(req, statusTs, text);
+
     let attempts = 0;
     try {
       // Bracketed paste so newlines in multi-line Slack messages insert
@@ -252,7 +287,8 @@ export class WebtermRuntimeHandler {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error("sendInput failed", { sessionId: session.id, error: msg });
-      await this.postReply(req, `:warning: failed to send input: \`${msg}\``);
+      await stopStatus();
+      await deliver(`:warning: failed to send input: \`${msg}\``);
       return;
     }
 
@@ -269,7 +305,8 @@ export class WebtermRuntimeHandler {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.error("prompt-ready wait failed", { sessionId: session.id, attempts, error: msg });
-        await this.postReply(req, `:warning: turn timed out: \`${msg}\``);
+        await stopStatus();
+        await deliver(`:warning: turn timed out: \`${msg}\``);
         return;
       }
 
@@ -281,7 +318,8 @@ export class WebtermRuntimeHandler {
         // the error propagated past every warning path and the turn vanished.
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.error("grid fetch failed mid-turn", { sessionId: session.id, error: msg });
-        await this.postReply(req, `:warning: lost the webterm session mid-turn: \`${msg}\``);
+        await stopStatus();
+        await deliver(`:warning: lost the webterm session mid-turn: \`${msg}\``);
         return;
       }
       const turn = extractTurn(grid, req.text);
@@ -293,7 +331,8 @@ export class WebtermRuntimeHandler {
       if (haveContent) {
         const settled = await this.awaitRenderSettled(session, req.text, turn!);
         const slackText = formatTurnForSlack(settled);
-        await this.postReply(req, slackText);
+        await stopStatus();
+        await deliver(slackText);
         return;
       }
       this.logger.warn("Empty extraction (claw-etj7 false-positive?), retrying", {
@@ -304,7 +343,85 @@ export class WebtermRuntimeHandler {
     }
 
     this.logger.error("Exhausted false-positive retries", { sessionId: session.id, attempts });
-    await this.postReply(req, ":warning: claude did not produce a response after multiple retries.");
+    await stopStatus();
+    await deliver(":warning: claude did not produce a response after multiple retries.");
+  }
+
+  private streamEnabled(req: HandleMessageOpts): boolean {
+    return this.opts.streamStatus && typeof (req.slack.chat as { update?: unknown }).update === "function";
+  }
+
+  // Post the "_🐾 on it…_" placeholder; returns its ts, or undefined if the
+  // post failed (in which case the turn falls back to a single final message).
+  private async postStatusPlaceholder(req: HandleMessageOpts): Promise<string | undefined> {
+    try {
+      const res = (await req.slack.chat.postMessage({
+        channel: req.channelId,
+        thread_ts: req.threadTs,
+        text: STATUS_PLACEHOLDER,
+        mrkdwn: true,
+      })) as { ts?: string };
+      return typeof res?.ts === "string" ? res.ts : undefined;
+    } catch (err) {
+      this.logger.error("status placeholder post failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return undefined;
+    }
+  }
+
+  // Poll the grid while the turn runs and chat.update the placeholder with
+  // claude's current activity. Best-effort and deduped/throttled so a failed
+  // update or a stable status never disrupts the turn.
+  private async runStatusLoop(
+    session: WebtermSession,
+    req: HandleMessageOpts,
+    statusTs: string,
+    ctl: { cancelled: boolean },
+  ): Promise<void> {
+    let lastText = STATUS_PLACEHOLDER;
+    let lastUpdate = 0;
+    while (!ctl.cancelled && session.alive) {
+      await sleep(this.opts.statusPollMs);
+      if (ctl.cancelled || !session.alive) break;
+      let grid: string;
+      try {
+        grid = await this.fetchGridText(session.id);
+      } catch {
+        continue;
+      }
+      const label = extractActivity(grid);
+      if (!label) continue;
+      const text = `_${label}_`;
+      if (text === lastText) continue;
+      if (Date.now() - lastUpdate < MIN_STATUS_UPDATE_MS) continue;
+      lastText = text;
+      lastUpdate = Date.now();
+      if (ctl.cancelled) break;
+      try {
+        await req.slack.chat.update({ channel: req.channelId, ts: statusTs, text });
+      } catch (err) {
+        this.logger.warn("status update failed (best-effort)", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  // Deliver the final text: update the placeholder in place when we have one
+  // (falling back to a fresh message if the update fails), else post fresh.
+  private async deliverReply(req: HandleMessageOpts, statusTs: string | undefined, text: string): Promise<void> {
+    if (statusTs) {
+      try {
+        await req.slack.chat.update({ channel: req.channelId, ts: statusTs, text });
+        return;
+      } catch (err) {
+        this.logger.error("final chat.update failed — falling back to postMessage", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    await this.postReply(req, text);
   }
 
   // Re-extract until two consecutive snapshots match (the response stopped

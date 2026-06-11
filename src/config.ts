@@ -88,6 +88,9 @@ export const config = {
     cwd: process.env.WEBTERM_CWD || `${process.env.HOME}/projects/claudeclaw`,
     claudeCmd: process.env.WEBTERM_CLAUDE_CMD || 'claude --dangerously-skip-permissions',
     token: resolveWebtermToken(),
+    // Live-activity status streaming (claw-1ta5) — on by default; set
+    // WEBTERM_STREAM_STATUS=0 to disable and post a single final message.
+    streamStatus: process.env.WEBTERM_STREAM_STATUS !== '0' && process.env.WEBTERM_STREAM_STATUS !== 'false',
   },
 };
 

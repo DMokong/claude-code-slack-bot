@@ -112,15 +112,36 @@ function makeMockWebterm() {
   };
 }
 
-function makeSlack() {
+function makeSlack(opts: { withUpdate?: boolean } = {}) {
   const posted: { channel: string; thread_ts?: string; text: string }[] = [];
+  const updated: { channel: string; ts: string; text: string }[] = [];
+  const messages = new Map<string, { channel: string; thread_ts?: string; text: string }>();
+  let n = 0;
+  const chat: any = {
+    postMessage: vi.fn(async (msg: any) => {
+      const ts = `msg-${++n}`;
+      posted.push(msg);
+      messages.set(ts, { channel: msg.channel, thread_ts: msg.thread_ts, text: msg.text });
+      return { ok: true, ts, channel: msg.channel } as any;
+    }),
+  };
+  // The handler only streams when chat.update exists; omit it to exercise the
+  // legacy single-message path.
+  if (opts.withUpdate !== false) {
+    chat.update = vi.fn(async (msg: any) => {
+      updated.push(msg);
+      const cur = messages.get(msg.ts) ?? { channel: msg.channel, text: "" };
+      messages.set(msg.ts, { ...cur, text: msg.text });
+      return { ok: true } as any;
+    });
+  }
   return {
     posted,
-    client: {
-      chat: {
-        postMessage: vi.fn(async (msg: any) => { posted.push(msg); return { ok: true } as any; }),
-      },
-    } as any,
+    updated,
+    messages,
+    // Latest text of a message by ts (after any updates).
+    textOf: (ts: string) => messages.get(ts)?.text,
+    client: { chat } as any,
   };
 }
 
@@ -671,6 +692,125 @@ describe("WebtermRuntimeHandler", () => {
     expect(slack.posted[0].text).toContain("fresh session here");
     // The dead-claude session was cleaned up.
     expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes("sess-dead-claude"))).toBeTruthy();
+  });
+});
+
+describe("live-activity streaming (claw-1ta5)", () => {
+  let mock: ReturnType<typeof makeMockWebterm>;
+  let slack: ReturnType<typeof makeSlack>;
+  let handler: WebtermRuntimeHandler;
+
+  beforeEach(() => {
+    mock = makeMockWebterm();
+    slack = makeSlack();
+    handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local",
+      fetchImpl: mock.fetchImpl,
+      cwd: "/tmp/test",
+      pasteSettleMs: 5,
+      extractStableMs: 10,
+      streamStatus: true,
+      statusPollMs: 10,
+    });
+  });
+
+  async function bootTo(req: any): Promise<string> {
+    handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4); // boot cmd + paste
+    return id;
+  }
+
+  it("posts a placeholder, streams live activity, and resolves the SAME message into the answer", async () => {
+    const handlePromise = handler.handleMessage({ channelId: "C1", threadTs: "T1", text: "do a thing", slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    // Placeholder posted immediately.
+    expect(slack.posted).toHaveLength(1);
+    expect(slack.posted[0].text).toBe("_🐾 on it…_");
+
+    // Mid-turn: a tool is running — the status loop should reflect it.
+    mock.setText(id, ["❯ do a thing", "", "⏺ Bash(ls -la)", "✻ Crunched for 1s"].join("\n"));
+    await waitFor(() => slack.updated.some((u) => u.text.includes("running a command")));
+
+    // Turn completes.
+    mock.setText(id, buildTurnGrid("do a thing", "all done!"));
+    mock.emitPromptReady(id);
+    await handlePromise;
+
+    // No second message — the placeholder became the answer.
+    expect(slack.posted).toHaveLength(1);
+    expect(slack.textOf("msg-1")).toContain("all done!");
+    // The final write to the message is the answer, not a stale status line.
+    expect(slack.updated[slack.updated.length - 1].text).toContain("all done!");
+  });
+
+  it("delivers the answer via chat.update, never a new message", async () => {
+    const req = { channelId: "C1", threadTs: "T1", text: "hi", slack: slack.client };
+    const id = await bootTo(req);
+    mock.setText(id, buildTurnGrid("hi", "hello there"));
+    mock.emitPromptReady(id);
+    await waitFor(() => slack.textOf("msg-1")?.includes("hello there") ?? false);
+    expect(slack.posted).toHaveLength(1); // only the placeholder was posted
+  });
+
+  it("falls back to a single message when the Slack client lacks chat.update", async () => {
+    slack = makeSlack({ withUpdate: false });
+    handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
+      pasteSettleMs: 5, extractStableMs: 10, streamStatus: true, statusPollMs: 10,
+    });
+    const req = { channelId: "C1", threadTs: "T1", text: "hi", slack: slack.client };
+    const id = await bootTo(req);
+    mock.setText(id, buildTurnGrid("hi", "no streaming here"));
+    mock.emitPromptReady(id);
+    await waitFor(() => slack.posted.some((m) => m.text.includes("no streaming here")));
+    // No placeholder, just the final answer as one message.
+    expect(slack.posted).toHaveLength(1);
+    expect(slack.posted[0].text).toContain("no streaming here");
+  });
+
+  it("falls back to postMessage if the placeholder post fails", async () => {
+    // postMessage throws once (placeholder), then works (fallback final).
+    let calls = 0;
+    slack.client.chat.postMessage = vi.fn(async (msg: any) => {
+      calls++;
+      if (calls === 1) throw new Error("slack down");
+      slack.posted.push(msg);
+      return { ok: true, ts: `late-${calls}` } as any;
+    });
+    const req = { channelId: "C1", threadTs: "T1", text: "hi", slack: slack.client };
+    const id = await bootTo(req);
+    mock.setText(id, buildTurnGrid("hi", "recovered answer"));
+    mock.emitPromptReady(id);
+    await waitFor(() => slack.posted.some((m) => m.text.includes("recovered answer")));
+    expect(slack.updated).toHaveLength(0); // no statusTs → no updates
+  });
+
+  it("streams an error into the placeholder on turn timeout (no orphan placeholder)", async () => {
+    const handler2 = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
+      pasteSettleMs: 5, extractStableMs: 10, streamStatus: true, statusPollMs: 10,
+    });
+    // Drive boot only; never fire the turn prompt-ready → timeout path.
+    // Use a tiny turn timeout by monkey-not-available; instead simulate by
+    // letting the session die so waitForPromptReady throws quickly.
+    const req = { channelId: "C1", threadTs: "T1", text: "stuck", slack: slack.client };
+    handler2.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    expect(slack.posted[0].text).toBe("_🐾 on it…_");
+    // Session dies → waitForPromptReady throws → error delivered into placeholder.
+    mock.emitExit(id, 1);
+    await waitFor(() => slack.textOf("msg-1")?.includes(":warning:") ?? false);
+    expect(slack.posted).toHaveLength(1); // placeholder reused for the error
   });
 });
 

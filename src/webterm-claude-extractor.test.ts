@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { extractTurn, formatTurnForSlack } from "./webterm-claude-extractor";
+import { extractTurn, formatTurnForSlack, extractActivity } from "./webterm-claude-extractor";
 
 const FIXTURE_DIR = join(__dirname, "..", "test", "fixtures", "webterm-grids");
 
@@ -154,6 +154,48 @@ describe("extractTurn — Fable-era TUI (claude v2.1.173, bracketed-paste input)
     const turn = extractTurn(grid, "hi");
     expect(turn).not.toBeNull();
     expect(turn!.assistant).toBe("hello there");
+  });
+});
+
+describe("extractActivity — live turn status", () => {
+  it("reports a spinner with elapsed seconds as 'thinking'", () => {
+    const grid = ["❯ hi", "", "✻ Crunched for 7s", "", "──────", "❯", "──────"].join("\n");
+    expect(extractActivity(grid)).toBe("✻ thinking… (7s)");
+  });
+
+  it("reports a whimsical spinner verb as-is", () => {
+    const grid = ["❯ hi", "", "✶ Pouncing…", "──────"].join("\n");
+    expect(extractActivity(grid)).toBe("✻ Pouncing…");
+  });
+
+  it("reports the '·'-glyph spinner too", () => {
+    const grid = ["❯ hi", "", "· Frolicking…"].join("\n");
+    expect(extractActivity(grid)).toBe("✻ Frolicking…");
+  });
+
+  it("prefers tool activity over the spinner, with a friendly label", () => {
+    const grid = ["❯ list files", "", "⏺ Bash(ls -la)", "  ⎿ running", "✻ Crunched for 2s"].join("\n");
+    expect(extractActivity(grid)).toBe("🔧 running a command…");
+  });
+
+  it("maps known tools to labels and falls back for unknown ones", () => {
+    expect(extractActivity("⏺ Read(/etc/hosts)")).toBe("📖 reading a file…");
+    expect(extractActivity("⏺ Grep(pattern)")).toBe("🔎 searching the code…");
+    expect(extractActivity("⏺ Frobnicate(x)")).toBe("🔧 Frobnicate…");
+  });
+
+  it("reports the LAST (most recent) tool when several appear", () => {
+    const grid = ["⏺ Read(a)", "⏺ Bash(b)"].join("\n");
+    expect(extractActivity(grid)).toBe("🔧 running a command…");
+  });
+
+  it("returns null when there's no recognizable activity", () => {
+    expect(extractActivity(["❯ hi", "", "──────", "❯", "──────"].join("\n"))).toBeNull();
+  });
+
+  it("does not treat an assistant ⏺ prose block as a tool", () => {
+    const grid = ["❯ hi", "", "⏺ Here is your answer about things.", "──────"].join("\n");
+    expect(extractActivity(grid)).toBeNull();
   });
 });
 
