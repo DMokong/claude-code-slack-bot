@@ -214,9 +214,16 @@ export function extractTurn(
   const toolNotes: string[] = [];
   const assistantRaw: string[] = [];
   let inAssistant = false;
+  const bareMarker = promptMarker.trimEnd(); // "❯"
 
   for (let i = echoEnd + 1; i < turnEnd; i++) {
     const line = lines[i];
+    // Hard stop at the bottom input box. We're already PAST the user echo, so
+    // any prompt-marker line here is the input box — never answer content.
+    // This is the backstop when the footer wasn't fully rendered at extraction
+    // (claude's dimmed input suggestion is dynamic and can leak otherwise).
+    const t = line.trim();
+    if (t === bareMarker || t.startsWith(bareMarker + " ")) break;
     if (isChrome(line)) continue;
     if (line.startsWith(assistantMarker)) {
       inAssistant = true;

@@ -203,6 +203,27 @@ describe("extractTurn — bottom-prompt boundary + model-row chrome (Sonnet-era 
     expect(turn!.assistant).not.toContain("wrapped onto");
   });
 
+  it("hard-stops at the input box even mid-render (no footer rules/model row yet)", () => {
+    // Backstop: claude's dynamic input suggestion appeared before the footer
+    // rules/status row rendered, so findFooterStart can't anchor. The prompt
+    // marker itself must end the answer.
+    const g = [
+      "❯ count files",
+      "",
+      "⏺ There are 39 entries in the current directory.",
+      "",
+      "❯ push this",
+    ].join("\n");
+    const turn = extractTurn(g, "count files");
+    expect(turn!.assistant).toBe("There are 39 entries in the current directory.");
+    expect(turn!.assistant).not.toContain("push this");
+  });
+
+  it("hard-stops at an empty input box (isolated ❯) mid-render", () => {
+    const g = ["❯ hi", "", "⏺ hello world", "", "❯"].join("\n");
+    expect(extractTurn(g, "hi")!.assistant).toBe("hello world");
+  });
+
   it("filters the Sonnet/Haiku model status row as chrome", () => {
     const g = ["❯ hi", "", "⏺ hello", "", "   Sonnet 4.6 │ 24%/200k │ $0.21 │ ⏱ 2s"].join("\n");
     expect(extractTurn(g, "hi")!.assistant).toBe("hello");
