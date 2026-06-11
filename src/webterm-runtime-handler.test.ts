@@ -674,6 +674,15 @@ describe("decodeSlackEntities", () => {
   it("passes through text without entities", () => {
     expect(decodeSlackEntities("plain text")).toBe("plain text");
   });
+  it("strips the '*Sent using* Claude' transport suffix", () => {
+    expect(decodeSlackEntities("real question here *Sent using* Claude")).toBe("real question here");
+    expect(decodeSlackEntities("multi\nline\n*Sent using* Claude")).toBe("multi\nline");
+  });
+  it("does not strip 'Sent using Claude' mid-message", () => {
+    expect(decodeSlackEntities("*Sent using* Claude is a suffix, this isn't")).toBe(
+      "*Sent using* Claude is a suffix, this isn't",
+    );
+  });
 });
 
 async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
