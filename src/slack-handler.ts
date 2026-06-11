@@ -141,11 +141,13 @@ export class SlackHandler {
         webtermUrl: config.webterm.url,
         cwd: config.webterm.cwd,
         claudeCmd: config.webterm.claudeCmd,
+        token: config.webterm.token,
       });
       this.logger.info('Webterm runtime enabled', {
         routeAll: config.webterm.routeAll,
         channels: config.webterm.channels,
         url: config.webterm.url,
+        authed: !!config.webterm.token,
       });
     }
   }

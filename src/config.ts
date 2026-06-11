@@ -1,7 +1,23 @@
 import dotenv from 'dotenv';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 
 dotenv.config();
+
+// The webterm API requires a bearer token (claw-yv02). Resolve it the same way
+// every local client does: WEBTERM_TOKEN env, else the shared token file the
+// server writes on boot. Empty string if neither exists (auth-off / pre-boot).
+function resolveWebtermToken(): string {
+  const env = process.env.WEBTERM_TOKEN?.trim();
+  if (env) return env;
+  try {
+    const file = process.env.WEBTERM_TOKEN_FILE || join(homedir(), '.webterm', 'token');
+    return existsSync(file) ? readFileSync(file, 'utf8').trim() : '';
+  } catch {
+    return '';
+  }
+}
 
 function parseChannelFileRoutes(raw: string): Record<string, string> {
   try {
@@ -71,6 +87,7 @@ export const config = {
     url: process.env.WEBTERM_URL || 'http://127.0.0.1:7681',
     cwd: process.env.WEBTERM_CWD || `${process.env.HOME}/projects/claudeclaw`,
     claudeCmd: process.env.WEBTERM_CLAUDE_CMD || 'claude --dangerously-skip-permissions',
+    token: resolveWebtermToken(),
   },
 };
 

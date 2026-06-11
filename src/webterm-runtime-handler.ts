@@ -68,6 +68,9 @@ export interface WebtermRuntimeOpts {
   idleReapMs?: number;
   // 0 disables the timer (tests drive reapIdleSessions() directly).
   reapIntervalMs?: number;
+  // Bearer token for the webterm API (claw-yv02). When set, every API call
+  // carries Authorization: Bearer <token>.
+  token?: string;
   fetchImpl?: typeof fetch;
 }
 
@@ -96,7 +99,8 @@ export interface HandleMessageOpts {
   slack: Pick<WebClient, "chat">;
 }
 
-interface InternalOpts extends Required<Omit<WebtermRuntimeOpts, "fetchImpl">> {
+interface InternalOpts extends Required<Omit<WebtermRuntimeOpts, "fetchImpl" | "token">> {
+  token: string;
   fetchImpl: typeof fetch;
 }
 
@@ -110,6 +114,8 @@ export class WebtermRuntimeHandler {
   private logger = new Logger("WebtermRuntime");
   private opts: InternalOpts;
   private reapTimer: ReturnType<typeof setInterval> | null = null;
+  // fetchImpl with the bearer token injected (no-op when no token configured).
+  private authedFetch: typeof fetch;
 
   constructor(opts: WebtermRuntimeOpts = {}) {
     this.opts = {
@@ -122,8 +128,18 @@ export class WebtermRuntimeHandler {
       extractStableMs: opts.extractStableMs ?? DEFAULT_EXTRACT_STABLE_MS,
       idleReapMs: opts.idleReapMs ?? DEFAULT_IDLE_REAP_MS,
       reapIntervalMs: opts.reapIntervalMs ?? DEFAULT_REAP_INTERVAL_MS,
+      token: opts.token ?? "",
       fetchImpl: opts.fetchImpl ?? fetch,
     };
+    const baseFetch = this.opts.fetchImpl;
+    const token = this.opts.token;
+    this.authedFetch = token
+      ? ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+          baseFetch(input, {
+            ...init,
+            headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${token}` },
+          })) as typeof fetch
+      : baseFetch;
     if (this.opts.reapIntervalMs > 0) {
       this.reapTimer = setInterval(() => {
         void this.reapIdleSessions().catch((err) => {
@@ -365,7 +381,7 @@ export class WebtermRuntimeHandler {
   // orphans from dead threads get cleaned too). Returns the reap count.
   async reapIdleSessions(): Promise<number> {
     let list: { id: string; title?: string; alive?: boolean; lastActivityAt?: number }[];
-    const res = await this.opts.fetchImpl(`${this.opts.webtermUrl}/api/sessions`);
+    const res = await this.authedFetch(`${this.opts.webtermUrl}/api/sessions`);
     if (!res.ok) throw new Error(`reap: list sessions ${res.status}`);
     list = (await res.json()) as typeof list;
     const cutoff = Date.now() - this.opts.idleReapMs;
@@ -398,7 +414,7 @@ export class WebtermRuntimeHandler {
   private async tryAdoptSession(threadKey: string): Promise<WebtermSession | null> {
     let list: { id: string; title?: string; alive?: boolean }[];
     try {
-      const res = await this.opts.fetchImpl(`${this.opts.webtermUrl}/api/sessions`);
+      const res = await this.authedFetch(`${this.opts.webtermUrl}/api/sessions`);
       if (!res.ok) return null;
       list = (await res.json()) as typeof list;
     } catch {
@@ -440,7 +456,7 @@ export class WebtermRuntimeHandler {
     threadTs: string | undefined,
     cwd?: string,
   ): Promise<WebtermSession> {
-    const res = await this.opts.fetchImpl(`${this.opts.webtermUrl}/api/sessions`, {
+    const res = await this.authedFetch(`${this.opts.webtermUrl}/api/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -485,7 +501,7 @@ export class WebtermRuntimeHandler {
       `&promptReadyPollMs=${DEFAULT_PROMPT_POLL_MS}` +
       `&promptReadyStablePolls=${DEFAULT_PROMPT_STABLE_POLLS}`;
     try {
-      const res = await this.opts.fetchImpl(url, {
+      const res = await this.authedFetch(url, {
         headers: { accept: "text/event-stream" },
         signal: session.sseAbort.signal,
       });
@@ -527,7 +543,7 @@ export class WebtermRuntimeHandler {
     opts: { kind?: "text" | "paste"; settleMs?: number } = {},
   ): Promise<void> {
     const base = `${this.opts.webtermUrl}/api/sessions/${sessionId}/input`;
-    const txt = await this.opts.fetchImpl(base, {
+    const txt = await this.authedFetch(base, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ kind: opts.kind ?? "text", data: text }),
@@ -540,7 +556,7 @@ export class WebtermRuntimeHandler {
   }
 
   private async sendKeys(sessionId: string, keys: string[]): Promise<void> {
-    const res = await this.opts.fetchImpl(`${this.opts.webtermUrl}/api/sessions/${sessionId}/input`, {
+    const res = await this.authedFetch(`${this.opts.webtermUrl}/api/sessions/${sessionId}/input`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ kind: "keys", keys }),
@@ -549,13 +565,13 @@ export class WebtermRuntimeHandler {
   }
 
   private async fetchGridText(sessionId: string): Promise<string> {
-    const res = await this.opts.fetchImpl(`${this.opts.webtermUrl}/api/sessions/${sessionId}/text`);
+    const res = await this.authedFetch(`${this.opts.webtermUrl}/api/sessions/${sessionId}/text`);
     if (!res.ok) throw new Error(`fetchGridText ${res.status}`);
     return await res.text();
   }
 
   private async killWebtermSession(sessionId: string): Promise<void> {
-    await this.opts.fetchImpl(`${this.opts.webtermUrl}/api/sessions/${sessionId}`, { method: "DELETE" });
+    await this.authedFetch(`${this.opts.webtermUrl}/api/sessions/${sessionId}`, { method: "DELETE" });
   }
 
   private async waitForPromptReady(

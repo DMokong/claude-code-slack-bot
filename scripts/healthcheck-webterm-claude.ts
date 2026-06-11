@@ -23,6 +23,22 @@
 // Exit 0 = healthy, 1 = any step failed.
 
 import { extractTurn, formatTurnForSlack } from "../src/webterm-claude-extractor";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+// The webterm API requires a bearer token (claw-yv02); read it the same way the
+// bot does (env, else the shared token file).
+function resolveToken(): string {
+  const env = process.env.WEBTERM_TOKEN?.trim();
+  if (env) return env;
+  try {
+    const f = process.env.WEBTERM_TOKEN_FILE ?? join(homedir(), ".webterm", "token");
+    return existsSync(f) ? readFileSync(f, "utf8").trim() : "";
+  } catch { return ""; }
+}
+const TOKEN = resolveToken();
+const authHeaders: Record<string, string> = TOKEN ? { authorization: `Bearer ${TOKEN}` } : {};
 
 const WEBTERM_URL = process.env.WEBTERM_URL ?? "http://127.0.0.1:7681";
 const WEBTERM_UI_URL = process.env.WEBTERM_UI_URL ?? "http://127.0.0.1:5173";
@@ -97,7 +113,7 @@ function infoLine(text: string) {
 async function createSession(): Promise<{ id: string; cols: number; rows: number }> {
   const res = await fetch(`${WEBTERM_URL}/api/sessions`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...authHeaders },
     body: JSON.stringify({ title: "healthcheck", cols: COLS, rows: ROWS, cwd: CWD }),
   });
   if (!res.ok) throw new Error(`POST /api/sessions returned ${res.status}: ${await res.text()}`);
@@ -105,7 +121,7 @@ async function createSession(): Promise<{ id: string; cols: number; rows: number
 }
 
 async function killSession(id: string): Promise<void> {
-  await fetch(`${WEBTERM_URL}/api/sessions/${id}`, { method: "DELETE" });
+  await fetch(`${WEBTERM_URL}/api/sessions/${id}`, { method: "DELETE", headers: { ...authHeaders } });
 }
 
 async function sendInput(
@@ -114,15 +130,15 @@ async function sendInput(
   opts: { kind?: "text" | "paste"; settleMs?: number } = {},
 ): Promise<void> {
   const base = `${WEBTERM_URL}/api/sessions/${id}/input`;
-  const a = await fetch(base, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: opts.kind ?? "text", data: text }) });
+  const a = await fetch(base, { method: "POST", headers: { "content-type": "application/json", ...authHeaders }, body: JSON.stringify({ kind: opts.kind ?? "text", data: text }) });
   if (!a.ok && a.status !== 204) throw new Error(`POST /input text returned ${a.status}`);
   if (opts.settleMs) await sleep(opts.settleMs);
-  const b = await fetch(base, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "keys", keys: ["Enter"] }) });
+  const b = await fetch(base, { method: "POST", headers: { "content-type": "application/json", ...authHeaders }, body: JSON.stringify({ kind: "keys", keys: ["Enter"] }) });
   if (!b.ok && b.status !== 204) throw new Error(`POST /input enter returned ${b.status}`);
 }
 
 async function fetchGridText(id: string): Promise<string> {
-  const res = await fetch(`${WEBTERM_URL}/api/sessions/${id}/text`);
+  const res = await fetch(`${WEBTERM_URL}/api/sessions/${id}/text`, { headers: { ...authHeaders } });
   if (!res.ok) throw new Error(`GET /text returned ${res.status}`);
   return await res.text();
 }
@@ -141,7 +157,7 @@ async function subscribeSse(id: string): Promise<SseHandle> {
     `${WEBTERM_URL}/api/sessions/${id}/events` +
     `?idleMs=1500&promptReady=true&promptReadyPollMs=400&promptReadyStablePolls=3`;
   const abort = new AbortController();
-  const res = await fetch(url, { headers: { accept: "text/event-stream" }, signal: abort.signal });
+  const res = await fetch(url, { headers: { accept: "text/event-stream", ...authHeaders }, signal: abort.signal });
   if (!res.ok || !res.body) throw new Error(`GET /events returned ${res.status}`);
   const handle: SseHandle = {
     promptReadyCount: 0,
