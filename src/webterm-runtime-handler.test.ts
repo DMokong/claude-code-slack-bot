@@ -10,6 +10,8 @@ function makeMockWebterm() {
     sseController: ReadableStreamDefaultController<Uint8Array> | null;
     inputs: { kind: string; data?: string; keys?: string[] }[];
     text: string;
+    title?: string;
+    alive?: boolean;
   }>();
   const calls: { method: string; url: string; body?: any }[] = [];
 
@@ -22,8 +24,18 @@ function makeMockWebterm() {
 
     if (method === "POST" && url.endsWith("/api/sessions")) {
       const id = `sess-${nextSessionId++}`;
-      sessions.set(id, { sseController: null, inputs: [], text: "" });
+      sessions.set(id, { sseController: null, inputs: [], text: "", title: body?.title, alive: true });
       return new Response(JSON.stringify({ id }), { status: 201, headers: { "content-type": "application/json" } });
+    }
+    if (method === "GET" && url.endsWith("/api/sessions")) {
+      const list = Array.from(sessions.entries()).map(([id, s]) => ({
+        id,
+        title: s.title ?? "",
+        alive: s.alive !== false,
+        cols: 120,
+        rows: 40,
+      }));
+      return new Response(JSON.stringify(list), { status: 200, headers: { "content-type": "application/json" } });
     }
     const mEvents = url.match(/\/api\/sessions\/([^\/?]+)\/events/);
     if (method === "GET" && mEvents) {
@@ -86,6 +98,9 @@ function makeMockWebterm() {
       const s = sessions.get(sessionId);
       if (!s) throw new Error(`no session ${sessionId}`);
       s.text = text;
+    },
+    seedSession(id: string, title: string, text: string) {
+      sessions.set(id, { sseController: null, inputs: [], text, title, alive: true });
     },
     onlySessionId() {
       const ids = Array.from(sessions.keys());
@@ -440,7 +455,7 @@ describe("WebtermRuntimeHandler", () => {
     expect(slack.posted[0].text).toContain("yes on both");
   });
 
-  it("shutdown() aborts SSE listeners and kills all sessions", async () => {
+  it("shutdown() leaves webterm sessions alive for adoption after restart (claw-usdo)", async () => {
     const req = { channelId: "C1", threadTs: "T1", text: "hi", slack: slack.client };
     const p = handler.handleMessage(req);
     await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
@@ -454,7 +469,75 @@ describe("WebtermRuntimeHandler", () => {
     expect(handler._sessionCount()).toBe(1);
     await handler.shutdown();
     expect(handler._sessionCount()).toBe(0);
+    // The webterm session must survive — it carries the conversation.
+    expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes(id))).toBeUndefined();
+  });
+
+  it("shutdown({ killSessions: true }) tears sessions down explicitly", async () => {
+    const req = { channelId: "C1", threadTs: "T1", text: "hi", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    mock.setText(id, buildTurnGrid("hi", "hello back"));
+    mock.emitPromptReady(id);
+    await p;
+
+    await handler.shutdown({ killSessions: true });
     expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes(id))).toBeTruthy();
+  });
+
+  it("adopts a surviving webterm session for the thread instead of creating a new one", async () => {
+    // A previous bot process created this session; its title carries the
+    // threadKey and claude is still running inside (model status row present).
+    mock.seedSession("sess-old", "slack-bot C1::T1", buildBootGrid());
+
+    const req = { channelId: "C1", threadTs: "T1", text: "are you still there?", slack: slack.client };
+    const p = handler.handleMessage(req);
+
+    // No boot: the turn paste goes straight in as inputs[0].
+    await waitFor(() => mock.sessions.get("sess-old")!.inputs.length >= 2);
+    expect(mock.sessions.get("sess-old")!.inputs[0]).toEqual({ kind: "paste", data: "are you still there?" });
+    mock.setText("sess-old", buildTurnGrid("are you still there?", "still here, context intact"));
+    mock.emitPromptReady("sess-old");
+    await p;
+
+    expect(slack.posted).toHaveLength(1);
+    expect(slack.posted[0].text).toContain("still here");
+    // Critical: no new session was created.
+    expect(mock.calls.filter((c) => c.method === "POST" && c.url.endsWith("/api/sessions"))).toHaveLength(0);
+    expect(handler._sessionCount()).toBe(1);
+  });
+
+  it("kills and recreates when the surviving session no longer runs claude (bare shell)", async () => {
+    // claude exited inside the PTY — pasting a user message into a bare zsh
+    // would execute it as a shell command. The handler must detect (no model
+    // status row) and recreate instead.
+    mock.seedSession("sess-dead-claude", "slack-bot C1::T1", [
+      "[webterm:test] user@host claudeclaw % claude --dangerously-skip-permissions",
+      "[webterm:test] user@host claudeclaw %",
+    ].join("\n"));
+
+    const req = { channelId: "C1", threadTs: "T1", text: "hello?", slack: slack.client };
+    const p = handler.handleMessage(req);
+
+    // A NEW session gets created and booted.
+    await waitFor(() => mock.calls.filter((c) => c.method === "POST" && c.url.endsWith("/api/sessions")).length === 1);
+    await waitFor(() => {
+      const fresh = [...mock.sessions.keys()].find((k) => k !== "sess-dead-claude");
+      return !!fresh && mock.sessions.get(fresh)!.sseController !== null;
+    });
+    const freshId = [...mock.sessions.keys()].find((k) => k !== "sess-dead-claude")!;
+    mock.emitPromptReady(freshId); // boot
+    await waitFor(() => mock.sessions.get(freshId)!.inputs.length >= 4);
+    mock.setText(freshId, buildTurnGrid("hello?", "fresh session here"));
+    mock.emitPromptReady(freshId);
+    await p;
+
+    expect(slack.posted[0].text).toContain("fresh session here");
+    // The dead-claude session was cleaned up.
+    expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes("sess-dead-claude"))).toBeTruthy();
   });
 });
 

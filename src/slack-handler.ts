@@ -150,7 +150,11 @@ export class SlackHandler {
     }
   }
 
-  /** Best-effort cleanup of webterm sessions on shutdown. */
+  /**
+   * Graceful shutdown. Webterm sessions are left ALIVE on purpose — they hold
+   * the conversations, and the next bot process adopts them by title
+   * (claw-usdo session persistence).
+   */
   async shutdown(): Promise<void> {
     if (this.webtermRuntime) {
       await this.webtermRuntime.shutdown();

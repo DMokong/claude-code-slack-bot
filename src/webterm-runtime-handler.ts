@@ -6,10 +6,13 @@
 // context on every message. The webterm path keeps a long-lived claude
 // REPL per Slack thread, so MCP stays warm and the conversation flows.
 //
-// Status: this is the **demoable** integration. One bot, one process, in-memory
-// thread→session mapping (lost on restart). Production hardening is tracked
-// under claw-usdo (persistence), claw-o05f (perm UX), claw-0dlt (staging
-// app), claw-g790 (trust dialog).
+// Persistence (claw-usdo): the session TITLE carries the threadKey
+// ("slack-bot <channel>::<thread>"), so webterm itself is the durable
+// thread→session map. On a map miss the handler first tries to ADOPT a
+// surviving session by title (verifying claude still runs inside) before
+// creating one, and shutdown() leaves sessions alive by default so a bot
+// restart resumes conversations. Remaining hardening: claw-o05f (perm UX),
+// claw-0dlt (staging app), claw-g790 (trust dialog).
 
 import type { WebClient } from "@slack/web-api";
 import { Logger } from "./logger";
@@ -115,7 +118,7 @@ export class WebtermRuntimeHandler {
       // De-dupe concurrent first-message creations for the same thread.
       let creation = this.creationInFlight.get(key);
       if (!creation) {
-        creation = this.createSession(key, req.channelId, req.threadTs)
+        creation = this.adoptOrCreateSession(key, req.channelId, req.threadTs)
           .then((s) => {
             this.sessions.set(key, s);
             return s;
@@ -241,6 +244,58 @@ export class WebtermRuntimeHandler {
       `. Check CLAUDE.md for any channel-specific protocols (e.g., #cc-ai Discourse Protocol). ` +
       `Format responses for Slack: plain prose, minimal markdown, no wide tables.`;
     return `${this.opts.claudeCmd} --append-system-prompt ${shellSingleQuote(ctx)}`;
+  }
+
+  private async adoptOrCreateSession(
+    threadKey: string,
+    channelId: string,
+    threadTs: string | undefined,
+  ): Promise<WebtermSession> {
+    const adopted = await this.tryAdoptSession(threadKey);
+    if (adopted) return adopted;
+    return this.createSession(threadKey, channelId, threadTs);
+  }
+
+  // A surviving session from a previous bot process carries the conversation —
+  // adopt it by title. Guard: if claude exited inside the PTY, the session is
+  // a bare shell and pasting a user message would EXECUTE it as a command;
+  // detect via the model status row and recreate instead.
+  private async tryAdoptSession(threadKey: string): Promise<WebtermSession | null> {
+    let list: { id: string; title?: string; alive?: boolean }[];
+    try {
+      const res = await this.opts.fetchImpl(`${this.opts.webtermUrl}/api/sessions`);
+      if (!res.ok) return null;
+      list = (await res.json()) as typeof list;
+    } catch {
+      return null;
+    }
+    const match = list.find((s) => s.alive !== false && s.title === `slack-bot ${threadKey}`);
+    if (!match) return null;
+    try {
+      const grid = await this.fetchGridText(match.id);
+      if (!/(Opus|Fable|Sonnet|Haiku)\s+\d/.test(grid)) {
+        this.logger.warn("Surviving session has no claude running — killing it", {
+          sessionId: match.id,
+          threadKey,
+        });
+        await this.killWebtermSession(match.id).catch(() => {});
+        return null;
+      }
+    } catch {
+      return null;
+    }
+    const session: WebtermSession = {
+      id: match.id,
+      threadKey,
+      promptReadyCount: 0,
+      sseAbort: new AbortController(),
+      ssePromise: Promise.resolve(),
+      alive: true,
+      inFlight: null,
+    };
+    session.ssePromise = this.runSseListener(session);
+    this.logger.info("Adopted surviving webterm session", { sessionId: match.id, threadKey });
+    return session;
   }
 
   private async createSession(
@@ -391,11 +446,16 @@ export class WebtermRuntimeHandler {
     }
   }
 
-  async shutdown(): Promise<void> {
+  // Default: leave webterm sessions ALIVE — they carry the conversations and
+  // the next bot process adopts them by title (claw-usdo). killSessions: true
+  // is for explicit decommissioning.
+  async shutdown(opts: { killSessions?: boolean } = {}): Promise<void> {
     const tasks: Promise<void>[] = [];
     for (const session of this.sessions.values()) {
       session.sseAbort.abort();
-      tasks.push(this.killWebtermSession(session.id).catch(() => {}));
+      if (opts.killSessions) {
+        tasks.push(this.killWebtermSession(session.id).catch(() => {}));
+      }
     }
     this.sessions.clear();
     await Promise.all(tasks);
