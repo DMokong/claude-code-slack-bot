@@ -49,6 +49,10 @@ const TURN_TIMEOUT_MS = 180_000;
 // grid-stable so prompt-ready fires ON it. Detected at boot and accepted
 // (option 1 is pre-selected; Enter confirms). Text captured live v2.1.173.
 const TRUST_DIALOG_RE = /Is this a project you created or one you trust|Yes, I trust this folder/;
+// The model-status row claude's TUI always renders ("Fable 5 …", "Opus 4.8 …").
+// Its presence means claude is the foreground process; its absence means the
+// PTY fell back to a bare shell (claude exited) — see isRunningClaude (H1).
+const CLAUDE_CHROME_RE = /(Opus|Fable|Sonnet|Haiku)\s+\d/;
 // Compensating control for claw-etj7: extractor returns null on no-⏺-block
 // (premature prompt-ready). Retry up to N times before giving up.
 const FALSE_POSITIVE_MAX_RETRIES = 3;
@@ -77,6 +81,9 @@ interface WebtermSession {
   // Serializes turns per session — bot's thread-lock already enforces this
   // at the Slack level, but we mirror it locally as a safety net.
   inFlight: Promise<void> | null;
+  // True only between boot/adoption (where the grid was already verified) and
+  // the first turn — lets handleMessage skip a redundant liveness fetch (H1).
+  freshlyBooted: boolean;
 }
 
 export interface HandleMessageOpts {
@@ -138,54 +145,87 @@ export class WebtermRuntimeHandler {
     // (observed live: `=>` arrived in claude's input as `=&gt;`).
     const req: HandleMessageOpts = { ...rawReq, text: decodeSlackEntities(rawReq.text) };
     const key = this.threadKey(req.channelId, req.threadTs);
-    let session = this.sessions.get(key);
-    if (session && !session.alive) {
-      this.logger.info("Stale session, recreating", { threadKey: key });
-      this.sessions.delete(key);
-      session = undefined;
-    }
-    if (!session) {
-      // De-dupe concurrent first-message creations for the same thread.
-      let creation = this.creationInFlight.get(key);
-      if (!creation) {
-        creation = this.adoptOrCreateSession(key, req.channelId, req.threadTs, req.cwd)
-          .then((s) => {
-            this.sessions.set(key, s);
-            return s;
-          })
-          .finally(() => {
-            this.creationInFlight.delete(key);
-          });
-        this.creationInFlight.set(key, creation);
-      }
+
+    // Resolve a session that is (a) in the map, (b) alive, AND (c) actually
+    // running claude — then re-verify after the inFlight wait (M2: the session
+    // can die while we're queued) and before each turn (H1: claude can exit
+    // inside the PTY, leaving a bare zsh that would EXECUTE the Slack message
+    // as a shell command). Bounded retries guard against a flapping webterm.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let session: WebtermSession;
       try {
-        session = await creation;
+        session = await this.resolveSession(key, req);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.error("Session creation failed", { threadKey: key, error: msg });
         await this.postReply(req, `:warning: webterm session creation failed: \`${msg}\``);
         return;
       }
-    }
 
-    // Serialize turns per session — the second message has to wait for the
-    // first to complete its prompt-ready cycle.
-    while (session.inFlight) {
-      try { await session.inFlight; } catch { /* prior turn errored — fall through */ }
-    }
+      // Serialize turns per session — the second message waits for the first
+      // to complete its prompt-ready cycle.
+      while (session.inFlight) {
+        try { await session.inFlight; } catch { /* prior turn errored — fall through */ }
+      }
 
-    const turnPromise = this.takeTurn(session, req);
-    session.inFlight = turnPromise.then(() => {}, () => {});
+      // Re-validate: the queued wait above may have outlived the session, and
+      // a freshly-booted session is known-good but a reused one may have lost
+      // claude since its last turn.
+      if (this.sessions.get(key) !== session || !session.alive) continue;
+      if (!session.freshlyBooted && !(await this.isRunningClaude(session.id))) {
+        this.logger.warn("Session no longer running claude — recreating", { sessionId: session.id, threadKey: key });
+        session.sseAbort.abort();
+        this.sessions.delete(key);
+        await this.killWebtermSession(session.id).catch(() => {});
+        continue;
+      }
+      session.freshlyBooted = false;
+
+      const turnPromise = this.takeTurn(session, req);
+      session.inFlight = turnPromise.then(() => {}, () => {});
+      try {
+        await turnPromise;
+      } finally {
+        session.inFlight = null;
+      }
+      return;
+    }
+    await this.postReply(req, ":warning: could not establish a stable claude session after several attempts.");
+  }
+
+  private async resolveSession(key: string, req: HandleMessageOpts): Promise<WebtermSession> {
+    const existing = this.sessions.get(key);
+    if (existing && existing.alive) return existing;
+    if (existing) this.sessions.delete(key);
+    // De-dupe concurrent first-message creations for the same thread.
+    let creation = this.creationInFlight.get(key);
+    if (!creation) {
+      creation = this.adoptOrCreateSession(key, req.channelId, req.threadTs, req.cwd)
+        .then((s) => {
+          this.sessions.set(key, s);
+          return s;
+        })
+        .finally(() => {
+          this.creationInFlight.delete(key);
+        });
+      this.creationInFlight.set(key, creation);
+    }
+    return creation;
+  }
+
+  // Cheap liveness guard (H1): is claude actually the foreground process, or
+  // did it exit and leave a bare shell? The model-status row is the tell.
+  private async isRunningClaude(sessionId: string): Promise<boolean> {
     try {
-      await turnPromise;
-    } finally {
-      session.inFlight = null;
+      const grid = await this.fetchGridText(sessionId);
+      return CLAUDE_CHROME_RE.test(grid);
+    } catch {
+      return false;
     }
   }
 
   private async takeTurn(session: WebtermSession, req: HandleMessageOpts): Promise<void> {
     let attempts = 0;
-    let startCount = session.promptReadyCount;
     try {
       // Bracketed paste so newlines in multi-line Slack messages insert
       // literally instead of acting as Enter and submitting prematurely.
@@ -200,6 +240,12 @@ export class WebtermRuntimeHandler {
       return;
     }
 
+    // Capture the baseline AFTER sendInput (M1): the paste re-arms the
+    // rising-edge prompt-ready detector, so a count snapshotted before the
+    // paste would treat that paste-induced fire as the turn's response and
+    // burn a retry. The Enter we just sent guarantees a real post-turn fire.
+    const startCount = session.promptReadyCount;
+
     while (attempts < FALSE_POSITIVE_MAX_RETRIES) {
       attempts++;
       try {
@@ -211,7 +257,17 @@ export class WebtermRuntimeHandler {
         return;
       }
 
-      const grid = await this.fetchGridText(session.id);
+      let grid: string;
+      try {
+        grid = await this.fetchGridText(session.id);
+      } catch (err) {
+        // M3: webterm can die between prompt-ready and the fetch. Without this
+        // the error propagated past every warning path and the turn vanished.
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error("grid fetch failed mid-turn", { sessionId: session.id, error: msg });
+        await this.postReply(req, `:warning: lost the webterm session mid-turn: \`${msg}\``);
+        return;
+      }
       const turn = extractTurn(grid, req.text);
       // Both "null" (no user echo found) and "empty assistant block" can mean
       // the same thing: claude hasn't actually responded yet — prompt-ready
@@ -352,7 +408,7 @@ export class WebtermRuntimeHandler {
     if (!match) return null;
     try {
       const grid = await this.fetchGridText(match.id);
-      if (!/(Opus|Fable|Sonnet|Haiku)\s+\d/.test(grid)) {
+      if (!CLAUDE_CHROME_RE.test(grid)) {
         this.logger.warn("Surviving session has no claude running — killing it", {
           sessionId: match.id,
           threadKey,
@@ -371,6 +427,7 @@ export class WebtermRuntimeHandler {
       ssePromise: Promise.resolve(),
       alive: true,
       inFlight: null,
+      freshlyBooted: true,
     };
     session.ssePromise = this.runSseListener(session);
     this.logger.info("Adopted surviving webterm session", { sessionId: match.id, threadKey });
@@ -404,6 +461,7 @@ export class WebtermRuntimeHandler {
       ssePromise: Promise.resolve(),
       alive: true,
       inFlight: null,
+      freshlyBooted: true,
     };
     session.ssePromise = this.runSseListener(session);
     // Boot claude inside the session.

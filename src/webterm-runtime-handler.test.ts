@@ -457,6 +457,71 @@ describe("WebtermRuntimeHandler", () => {
     expect(slack.posted[0].text).toContain("yes on both");
   });
 
+  it("guards against a dead claude on the hot path — second message must not type into bare zsh (H1)", async () => {
+    // claude crashed/exited between turns: the PTY survives as zsh, SSE exit
+    // never fires, alive stays true. Without a pre-send chrome check the
+    // user's message would be EXECUTED as a shell command.
+    const req1 = { channelId: "C1", threadTs: "T1", text: "first", slack: slack.client };
+    const p1 = handler.handleMessage(req1);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id1 = mock.onlySessionId();
+    mock.emitPromptReady(id1);
+    await waitFor(() => mock.sessions.get(id1)!.inputs.length >= 4);
+    mock.setText(id1, buildTurnGrid("first", "ok"));
+    mock.emitPromptReady(id1);
+    await p1;
+
+    // claude dies inside the PTY — grid is now a bare zsh prompt.
+    mock.setText(id1, "[webterm:test] user@host claudeclaw %");
+
+    const req2 = { channelId: "C1", threadTs: "T1", text: "rm -rf would run here", slack: slack.client };
+    const p2 = handler.handleMessage(req2);
+
+    // A replacement session must be created; the dead one killed.
+    await waitFor(() => mock.sessions.size >= 1 && [...mock.sessions.keys()].some((k) => k !== id1));
+    const id2 = [...mock.sessions.keys()].find((k) => k !== id1)!;
+    await waitFor(() => mock.sessions.get(id2)!.sseController !== null);
+    mock.emitPromptReady(id2); // boot
+    await waitFor(() => mock.sessions.get(id2)!.inputs.length >= 4);
+    mock.setText(id2, buildTurnGrid("rm -rf would run here", "fresh session, treated as text"));
+    mock.emitPromptReady(id2);
+    await p2;
+
+    // The message NEVER landed in the dead session.
+    expect(mock.calls.find((c) => c.method === "POST" && c.url.includes(`${id1}/input`) && c.body?.data?.includes("rm -rf"))).toBeUndefined();
+    expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes(id1))).toBeTruthy();
+    expect(slack.posted[1].text).toContain("fresh session");
+  });
+
+  it("posts a warning instead of dying silently when the grid fetch fails mid-turn (M3)", async () => {
+    let failText = false;
+    const flaky: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (failText && url.includes("/text")) {
+        throw new Error("ECONNREFUSED");
+      }
+      return mock.fetchImpl(input as any, init);
+    };
+    handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local",
+      fetchImpl: flaky,
+      cwd: "/tmp/test",
+      pasteSettleMs: 5,
+      extractStableMs: 10,
+    });
+    const req = { channelId: "C1", threadTs: "T1", text: "hi", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    failText = true; // webterm dies between prompt-ready and the grid fetch
+    mock.emitPromptReady(id);
+    await p;
+    expect(slack.posted).toHaveLength(1);
+    expect(slack.posted[0].text).toMatch(/:warning:/);
+  });
+
   it("accepts the trust-folder dialog at boot and continues to the prompt (claw-g790)", async () => {
     // Captured live 2026-06-11 from claude v2.1.173 in an untrusted cwd. The
     // dialog is grid-stable, so prompt-ready fires ON it — without detection,

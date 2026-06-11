@@ -123,6 +123,26 @@ describe("extractTurn — Fable-era TUI (claude v2.1.173, bracketed-paste input)
     expect(turn!.assistant).toBe("");
   });
 
+  it("fable-code-block-response: preserves intentional code newlines (H4 — does NOT flatten)", () => {
+    const f = loadFixture("fable-code-block-response");
+    const turn = extractTurn(f.grid, f.userInput);
+    expect(turn).not.toBeNull();
+    // The two code lines must stay on separate lines, not be word-wrap-joined.
+    const lines = turn!.assistant.split("\n").filter((l) => l.trim() !== "");
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(turn!.assistant).toContain("def add(a, b):");
+    expect(turn!.assistant).toMatch(/def add\(a, b\):\n/);
+    expect(turn!.assistant).not.toMatch(/def add\(a, b\): +return/);
+  });
+
+  it("still joins genuinely word-wrapped prose (04 regression with the H4 width heuristic)", () => {
+    const f = loadFixture("04-tool-read");
+    const turn = extractTurn(f.grid, f.userInput);
+    expect(turn).not.toBeNull();
+    // The wrapped sentence is still collapsed to one line.
+    expect(turn!.assistant.split("\n")).toHaveLength(1);
+  });
+
   it("filters the Fable model status row as chrome when no bottom prompt bounds the region", () => {
     const grid = [
       "❯ hi",

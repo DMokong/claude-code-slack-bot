@@ -109,16 +109,25 @@ function findBottomPromptRow(lines: string[], promptMarker: string): number {
   return -1;
 }
 
-// Unwrap word-wrapped continuation lines. claude's TUI wraps long sentences
-// at the grid width; continuation rows are indented by `assistantMarker.length`
-// (typically 2 spaces). Join those back to the prior line with a single space.
-// Lines that start with a list bullet ("- ", "* ", or "N. ") or are blank
-// are preserved as-is.
-function unwrapWordWrap(lines: string[], indent: number): string[] {
+// Unwrap word-wrapped continuation lines while PRESERVING intentional newlines
+// (code blocks, short list/code lines). claude's TUI hard-wraps long prose at
+// the grid width, so a row is a wrap-continuation only if the PREVIOUS physical
+// row actually reached near the terminal width. A short previous row (e.g. a
+// line of code) means the newline was intentional — don't join (H4).
+//
+// `lines` are normalized so every entry's `.length` equals its true grid width
+// (the assistant marker is replaced with an equal-width indent upstream).
+function unwrapWordWrap(lines: string[], indent: number, cols: number): string[] {
+  // A wrapped row breaks at a word boundary, leaving up to ~one word of slack.
+  // Real captures: wrapped prose fills cols-1..cols-4 (116-119 of 120); code
+  // lines sit far below. A generous slack separates them without joining code.
+  const wrapThreshold = Math.max(indent + 1, cols - 24);
   const out: string[] = [];
+  let prevWidth = 0; // grid width of the previous physical row
   for (const line of lines) {
     if (line.trim() === "") {
       out.push("");
+      prevWidth = 0;
       continue;
     }
     const leading = /^\s*/.exec(line)?.[0].length ?? 0;
@@ -128,13 +137,15 @@ function unwrapWordWrap(lines: string[], indent: number): string[] {
       out.length > 0 &&
       out[out.length - 1].trim() !== "" &&
       leading >= indent &&
-      !isListItem
+      !isListItem &&
+      prevWidth >= wrapThreshold
     ) {
-      // Continuation — join to previous line with a single space.
+      // Continuation of a wrapped line — join with a single space.
       out[out.length - 1] = out[out.length - 1].replace(/\s+$/, "") + " " + body.trimStart();
     } else {
       out.push(body);
     }
+    prevWidth = line.length;
   }
   return out;
 }
@@ -168,7 +179,9 @@ export function extractTurn(
     if (isChrome(line)) continue;
     if (line.startsWith(assistantMarker)) {
       inAssistant = true;
-      assistantRaw.push(line.slice(assistantMarker.length));
+      // Replace the marker with an equal-width indent so the line's length
+      // reflects its true grid width (needed for the wrap-vs-newline test).
+      assistantRaw.push(" ".repeat(assistantMarker.length) + line.slice(assistantMarker.length));
       continue;
     }
     if (!inAssistant) {
@@ -186,7 +199,10 @@ export function extractTurn(
     assistantRaw.pop();
   }
 
-  const unwrapped = unwrapWordWrap(assistantRaw, assistantMarker.length);
+  // Grid width: the full-width chrome rows (── rules, status bar) set it.
+  // Fall back to a sane default if the grid is unusually narrow.
+  const cols = Math.max(40, ...lines.map((l) => l.length));
+  const unwrapped = unwrapWordWrap(assistantRaw, assistantMarker.length, cols);
   const assistant = unwrapped.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 
   return { assistant, toolNotes };

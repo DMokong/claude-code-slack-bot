@@ -1,0 +1,28 @@
+__USER_INPUT__
+Print a python function named add that returns a+b if a>b else b-a, as a fenced code block. No other commentary.
+__GRID__
+claude --model 'claude-fable-5[1m]' --effort low --dangerously-skip-permissions
+[webterm:code-probe2] dustincheng@Dustins-MacBook-Air claudeclaw % claude --model 'claude-fable-5[1m]' --effort low --da
+ngerously-skip-permissions
+ ▐▛███▜▌   Claude Code v2.1.173
+▝▜█████▛▘  Fable 5 with low effort · Claude Max
+  ▘▘ ▝▝    ~/projects/claudeclaw
+
+ ▎ Fable 5 is here! Our newest model for complex, long-running work
+ ▎ Included in your plan limits until Jun 22, then switch to usage credits to continue.
+
+❯ Print a python function named add that returns a+b if a>b else b-a, as a fenced code block. No other commentary.
+
+⏺ def add(a, b):
+      return a + b if a > b else b - a
+
+✻ Brewed for 4s
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Fable 5 │ █░░░░░░░░░░░░░░░░░░░ 6%%/1000k (25.9k) │ $0.30 │ ⏱ 13s
+   main ● │ ~/projects/claudeclaw │ v2.1.173
+   🧠  ████░░░░░░ 88/200 │ 11 topics (501L) │ ✏ never
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+__SCROLLBACK__
