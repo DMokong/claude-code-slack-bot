@@ -20,18 +20,14 @@ export class FileHandler {
 
   /**
    * Download files with optional channel-aware routing.
-   * For #cc-finance, files are saved to data/finance/inbox/ instead of temp dir.
+   * If the channel has a file route configured, files are saved there instead of temp dir.
    */
-  async downloadAndProcessFiles(files: any[], options?: { channelId?: string; financeChannelId?: string; financeInboxPath?: string }): Promise<ProcessedFile[]> {
+  async downloadAndProcessFiles(files: any[], options?: { targetDir?: string }): Promise<ProcessedFile[]> {
     const processedFiles: ProcessedFile[] = [];
+    const targetDir = options?.targetDir;
 
-    const isFinanceChannel = options?.channelId && options?.financeChannelId
-      && options.channelId === options.financeChannelId;
-    const targetDir = isFinanceChannel && options?.financeInboxPath
-      ? options.financeInboxPath : undefined;
-
-    if (isFinanceChannel) {
-      this.logger.info('Finance channel detected — routing files to finance inbox', {
+    if (targetDir) {
+      this.logger.info('Channel file route active — routing files to configured path', {
         targetDir,
       });
     }
@@ -48,10 +44,6 @@ export class FileHandler {
     }
 
     return processedFiles;
-  }
-
-  isFinanceChannel(channelId: string, financeChannelId: string): boolean {
-    return !!financeChannelId && channelId === financeChannelId;
   }
 
   private async downloadFile(file: any, targetDir?: string): Promise<ProcessedFile | null> {
@@ -79,9 +71,10 @@ export class FileHandler {
       if (targetDir) {
         fs.mkdirSync(targetDir, { recursive: true });
       }
+      const timestamp = Date.now();
       const tempPath = targetDir
-        ? path.join(saveDir, file.name)
-        : path.join(saveDir, `slack-file-${Date.now()}-${file.name}`);
+        ? path.join(saveDir, `${timestamp}-${file.name}`)
+        : path.join(saveDir, `slack-file-${timestamp}-${file.name}`);
       
       fs.writeFileSync(tempPath, buffer);
 
@@ -127,14 +120,8 @@ export class FileHandler {
     return textTypes.some(type => mimetype.startsWith(type));
   }
 
-  async formatFilePrompt(files: ProcessedFile[], userText: string, options?: { isFinanceChannel?: boolean }): Promise<string> {
+  async formatFilePrompt(files: ProcessedFile[], userText: string): Promise<string> {
     let prompt = userText || 'Please analyze the uploaded files.';
-
-    if (options?.isFinanceChannel && files.length > 0) {
-      const fileNames = files.map(f => f.name).join(', ');
-      prompt = `${userText || ''}\n\nFinancial files received and saved to data/finance/inbox/: ${fileNames}\n\nPlease run the finance ingestion pipeline to process these files. Read the ingestion prompt at tasks/prompts/finance-ingest.md and execute it to parse, categorize, and store the transactions.`.trim();
-      return prompt;
-    }
 
     if (files.length > 0) {
       prompt += '\n\nUploaded files:\n';

@@ -81,6 +81,7 @@ export class ClaudeHandler {
       includePartialMessages: true,
       permissionMode: 'bypassPermissions',
       pathToClaudeCodeExecutable: process.env.CLAUDE_EXECUTABLE || 'claude',
+      model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
       // Prompt-based hooks (SessionEnd, PreCompact) don't fire outside REPL mode.
       // As a workaround, append a system prompt nudge so Claude invokes the remember
       // skill before finishing. See claudeclaw/docs/plans/remember-hook-alternatives.md
