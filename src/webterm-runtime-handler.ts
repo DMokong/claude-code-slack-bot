@@ -57,9 +57,6 @@ const TRUST_DIALOG_RE = /Is this a project you created or one you trust|Yes, I t
 // Its presence means claude is the foreground process; its absence means the
 // PTY fell back to a bare shell (claude exited) — see isRunningClaude (H1).
 const CLAUDE_CHROME_RE = /(Opus|Fable|Sonnet|Haiku)\s+\d/;
-// Compensating control for claw-etj7: extractor returns null on no-⏺-block
-// (premature prompt-ready). Retry up to N times before giving up.
-const FALSE_POSITIVE_MAX_RETRIES = 3;
 // Live-activity status (claw-1ta5): the webterm path has no token stream, so to
 // restore the SDK path's "working… / running a tool…" feedback we post a
 // placeholder, update it with claude's live grid activity while the turn runs,
@@ -280,7 +277,6 @@ export class WebtermRuntimeHandler {
     };
     const deliver = (text: string) => this.deliverReply(req, statusTs, text);
 
-    let attempts = 0;
     try {
       // Bracketed paste so newlines in multi-line Slack messages insert
       // literally instead of acting as Enter and submitting prematurely.
@@ -301,18 +297,36 @@ export class WebtermRuntimeHandler {
     // paste would treat that paste-induced fire as the turn's response and
     // burn a retry. The Enter we just sent guarantees a real post-turn fire.
     const startCount = session.promptReadyCount;
+    // TIME-bounded, not count-bounded (claw-fcd9/etj7). A slow or tall turn
+    // emits several prompt-readys while claude is still 'Tinkering…' (no ⏺
+    // block yet); the old fixed 3-retry cap was exhausted by those premature
+    // fires BEFORE the answer rendered, posting a misleading "no response".
+    // Instead, keep waiting for the next prompt-ready and re-extracting until
+    // the answer appears or the overall turn deadline passes.
+    const turnDeadline = Date.now() + TURN_TIMEOUT_MS;
+    let target = startCount;
+    let fires = 0;
 
-    while (attempts < FALSE_POSITIVE_MAX_RETRIES) {
-      attempts++;
+    for (;;) {
+      target++;
+      const remaining = turnDeadline - Date.now();
+      if (remaining <= 0) {
+        this.logger.error("Turn produced no answer within deadline", { sessionId: session.id, fires });
+        await stopStatus();
+        await deliver(":warning: claude did not produce a response in time.");
+        return;
+      }
       try {
-        await this.waitForPromptReady(session, startCount + attempts, TURN_TIMEOUT_MS);
+        await this.waitForPromptReady(session, target, remaining);
       } catch (err) {
+        // No further prompt-ready within the remaining budget — genuine timeout.
         const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error("prompt-ready wait failed", { sessionId: session.id, attempts, error: msg });
+        this.logger.error("prompt-ready wait failed", { sessionId: session.id, fires, error: msg });
         await stopStatus();
         await deliver(`:warning: turn timed out: \`${msg}\``);
         return;
       }
+      fires++;
 
       let turn: ExtractedTurn | null;
       try {
@@ -326,9 +340,9 @@ export class WebtermRuntimeHandler {
         await deliver(`:warning: lost the webterm session mid-turn: \`${msg}\``);
         return;
       }
-      // Both "null" (no user echo found) and "empty assistant block" can mean
-      // the same thing: claude hasn't actually responded yet — prompt-ready
-      // fired prematurely (claw-etj7). Treat both as retryable.
+      // Both "null" (no user echo found) and "empty assistant block" mean the
+      // same thing: claude hasn't produced the answer yet — prompt-ready fired
+      // prematurely while it was still thinking/rendering (claw-etj7).
       const haveContent =
         turn !== null && (turn.assistant.trim().length > 0 || turn.toolNotes.length > 0);
       if (haveContent) {
@@ -338,16 +352,14 @@ export class WebtermRuntimeHandler {
         await deliver(slackText);
         return;
       }
-      this.logger.warn("Empty extraction (claw-etj7 false-positive?), retrying", {
+      // Premature fire — keep waiting for the next one (bounded by the turn
+      // deadline above), do NOT give up after a fixed count.
+      this.logger.warn("Empty extraction (premature prompt-ready), waiting for next", {
         sessionId: session.id,
-        attempt: attempts,
+        fires,
         turnIsNull: turn === null,
       });
     }
-
-    this.logger.error("Exhausted false-positive retries", { sessionId: session.id, attempts });
-    await stopStatus();
-    await deliver(":warning: claude did not produce a response after multiple retries.");
   }
 
   private streamEnabled(req: HandleMessageOpts): boolean {

@@ -412,6 +412,47 @@ describe("WebtermRuntimeHandler", () => {
     expect(text).not.toContain("❯");
   });
 
+  it("keeps waiting through repeated premature prompt-readys until the answer renders (claw-fcd9/etj7)", async () => {
+    // Live failure (2026-06-13): a slow/tall turn emits several prompt-readys
+    // while claude is still 'Tinkering…' (no ⏺ yet). The old count-bounded loop
+    // (max 3) burned its whole budget on those premature fires and posted
+    // 'did not produce a response' BEFORE the answer rendered. The loop must be
+    // time-bounded — keep waiting for the answer until the turn deadline, not
+    // give up after N premature fires.
+    const req = { channelId: "C1", threadTs: "T1", text: "count to 45", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    // "Still thinking": echo present, spinner, no ⏺ → empty extraction.
+    const thinking = [
+      "❯ count to 45",
+      "",
+      "✻ Tinkering…",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Sonnet 4.6 │ ⏱ 1s",
+    ].join("\n");
+    mock.setText(id, thinking);
+    // Fire FOUR premature prompt-readys — past the old cap of 3.
+    for (let i = 0; i < 4; i++) { mock.emitPromptReady(id); await sleep(15); }
+
+    // The old loop would have given up by now; the time-bounded loop is still
+    // waiting (no warning posted, no answer yet).
+    await sleep(40);
+    expect(slack.posted.some((m) => /did not produce a response|:warning:/.test(m.text))).toBe(false);
+
+    // claude finally renders the answer.
+    mock.setText(id, buildTurnGrid("count to 45", "Here are the numbers 1 through 45."));
+    mock.emitPromptReady(id);
+    await p;
+    expect(slack.posted.some((m) => m.text.includes("1 through 45"))).toBe(true);
+  });
+
   it("posts a warning to Slack when session creation fails", async () => {
     const flaky: typeof fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input.toString();
