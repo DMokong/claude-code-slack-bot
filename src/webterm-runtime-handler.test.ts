@@ -453,6 +453,34 @@ describe("WebtermRuntimeHandler", () => {
     expect(slack.posted.some((m) => m.text.includes("1 through 45"))).toBe(true);
   });
 
+  it("delivers via polling even when no post-completion prompt-ready fires (claw-fcd9/etj7 fix A)", async () => {
+    // Root cause (real-grid probe 2026-06-13): webterm's prompt-ready fires a
+    // non-deterministic count; the post-completion fire can be missed entirely,
+    // so a prompt-ready-GATED loop waits the full deadline then times out. The
+    // turn loop must POLL the grid for a settled answer, with prompt-ready only
+    // as a fast-path accelerator.
+    handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local",
+      fetchImpl: mock.fetchImpl,
+      cwd: "/tmp/test",
+      pasteSettleMs: 5,
+      extractStableMs: 10,
+      turnPollMs: 20,
+    });
+    const req = { channelId: "C1", threadTs: "T1", text: "count to 45", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    // The answer renders, but NO turn prompt-ready ever fires (the etj7 missing
+    // fire). The poll loop must still pick it up and deliver.
+    mock.setText(id, buildTurnGrid("count to 45", "Here are the numbers 1 through 45."));
+    await p;
+    expect(slack.posted.some((m) => m.text.includes("1 through 45"))).toBe(true);
+  });
+
   it("posts a warning to Slack when session creation fails", async () => {
     const flaky: typeof fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input.toString();

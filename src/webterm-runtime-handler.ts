@@ -44,6 +44,11 @@ const DEFAULT_IDLE_REAP_MS = 30 * 60_000;
 const DEFAULT_REAP_INTERVAL_MS = 5 * 60_000;
 const BOOT_TIMEOUT_MS = 60_000;
 const TURN_TIMEOUT_MS = 180_000;
+// How often to re-extract the grid while waiting for the answer (claw-fcd9/etj7
+// fix A). The turn loop polls on this interval AND wakes early on a prompt-ready
+// fire — so a MISSING post-completion prompt-ready (the etj7 non-deterministic
+// firing) can't strand the turn until the deadline; the next poll catches it.
+const DEFAULT_TURN_POLL_MS = 1_500;
 // On shutdown, how long to wait for in-flight turns to post their reply before
 // tearing down (claw-wb4a). Slack acked the event already, so a dropped reply
 // never redelivers — but we can't block launchd's SIGTERM forever either.
@@ -88,6 +93,9 @@ export interface WebtermRuntimeOpts {
   // unchanged; enabled in production via slack-handler.
   streamStatus?: boolean;
   statusPollMs?: number;
+  // How often the turn loop re-extracts the grid while waiting for the answer
+  // (claw-fcd9/etj7 fix A). Tests set this small for speed.
+  turnPollMs?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -148,6 +156,7 @@ export class WebtermRuntimeHandler {
       token: opts.token ?? "",
       streamStatus: opts.streamStatus ?? false,
       statusPollMs: opts.statusPollMs ?? DEFAULT_STATUS_POLL_MS,
+      turnPollMs: opts.turnPollMs ?? DEFAULT_TURN_POLL_MS,
       fetchImpl: opts.fetchImpl ?? fetch,
     };
     const baseFetch = this.opts.fetchImpl;
@@ -296,44 +305,38 @@ export class WebtermRuntimeHandler {
     // rising-edge prompt-ready detector, so a count snapshotted before the
     // paste would treat that paste-induced fire as the turn's response and
     // burn a retry. The Enter we just sent guarantees a real post-turn fire.
-    const startCount = session.promptReadyCount;
-    // TIME-bounded, not count-bounded (claw-fcd9/etj7). A slow or tall turn
-    // emits several prompt-readys while claude is still 'Tinkering…' (no ⏺
-    // block yet); the old fixed 3-retry cap was exhausted by those premature
-    // fires BEFORE the answer rendered, posting a misleading "no response".
-    // Instead, keep waiting for the next prompt-ready and re-extracting until
-    // the answer appears or the overall turn deadline passes.
+    // POLL-driven, with prompt-ready as a fast-path accelerator (claw-fcd9/etj7
+    // fix A). The earlier loops GATED extraction on a prompt-ready fire, but the
+    // detector fires a NON-DETERMINISTIC number of times and can miss the
+    // post-completion fire entirely — stranding the turn until the deadline.
+    // Instead, re-extract the grid every turnPollMs, AND wake early on a fire,
+    // until a settled answer appears (premature/empty extractions just keep
+    // polling) or the turn deadline passes. prompt-ready is now an optimization,
+    // not a requirement, so a missing fire no longer loses the turn.
     const turnDeadline = Date.now() + TURN_TIMEOUT_MS;
-    let target = startCount;
-    let fires = 0;
+    let lastCount = session.promptReadyCount;
 
-    for (;;) {
-      target++;
-      const remaining = turnDeadline - Date.now();
-      if (remaining <= 0) {
-        this.logger.error("Turn produced no answer within deadline", { sessionId: session.id, fires });
+    while (Date.now() < turnDeadline) {
+      // Wake on the next prompt-ready OR after turnPollMs, whichever is first.
+      await this.waitForPromptReadyOrPoll(
+        session,
+        lastCount + 1,
+        Math.min(this.opts.turnPollMs, Math.max(0, turnDeadline - Date.now())),
+      );
+      lastCount = session.promptReadyCount;
+      if (!session.alive) {
+        this.logger.error("Session died mid-turn", { sessionId: session.id });
         await stopStatus();
-        await deliver(":warning: claude did not produce a response in time.");
+        await deliver(":warning: lost the webterm session mid-turn.");
         return;
       }
-      try {
-        await this.waitForPromptReady(session, target, remaining);
-      } catch (err) {
-        // No further prompt-ready within the remaining budget — genuine timeout.
-        const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error("prompt-ready wait failed", { sessionId: session.id, fires, error: msg });
-        await stopStatus();
-        await deliver(`:warning: turn timed out: \`${msg}\``);
-        return;
-      }
-      fires++;
 
       let turn: ExtractedTurn | null;
       try {
         turn = await this.fetchAndExtract(session.id, req.text);
       } catch (err) {
-        // M3: webterm can die between prompt-ready and the fetch. Without this
-        // the error propagated past every warning path and the turn vanished.
+        // M3: webterm can die between the poll and the fetch. Without this the
+        // error propagated past every warning path and the turn vanished.
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.error("grid fetch failed mid-turn", { sessionId: session.id, error: msg });
         await stopStatus();
@@ -341,8 +344,8 @@ export class WebtermRuntimeHandler {
         return;
       }
       // Both "null" (no user echo found) and "empty assistant block" mean the
-      // same thing: claude hasn't produced the answer yet — prompt-ready fired
-      // prematurely while it was still thinking/rendering (claw-etj7).
+      // same thing: claude hasn't produced the answer yet (still thinking /
+      // rendering). Keep polling.
       const haveContent =
         turn !== null && (turn.assistant.trim().length > 0 || turn.toolNotes.length > 0);
       if (haveContent) {
@@ -352,13 +355,28 @@ export class WebtermRuntimeHandler {
         await deliver(slackText);
         return;
       }
-      // Premature fire — keep waiting for the next one (bounded by the turn
-      // deadline above), do NOT give up after a fixed count.
-      this.logger.warn("Empty extraction (premature prompt-ready), waiting for next", {
-        sessionId: session.id,
-        fires,
-        turnIsNull: turn === null,
-      });
+    }
+
+    this.logger.error("Turn produced no answer within deadline", { sessionId: session.id });
+    await stopStatus();
+    await deliver(":warning: claude did not produce a response in time.");
+  }
+
+  // Resolve when promptReadyCount reaches `target` (fast path), the session
+  // dies, or `ms` elapses (poll tick) — whichever is first. Unlike
+  // waitForPromptReady, a timeout is NOT an error here: it just means "poll the
+  // grid now" (claw-fcd9/etj7 fix A).
+  private async waitForPromptReadyOrPoll(
+    session: WebtermSession,
+    target: number,
+    ms: number,
+  ): Promise<void> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if (!session.alive) return;
+      if (session.promptReadyCount >= target) return;
+      if (Date.now() >= deadline) return;
+      await sleep(50);
     }
   }
 
