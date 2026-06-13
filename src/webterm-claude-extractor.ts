@@ -132,7 +132,21 @@ function findEchoEnd(
   let i = start;
   while (consumed < userText.length && i + 1 < lines.length) {
     const next = lines[i + 1];
-    // Continuation row must start with the indent and not be a marker line.
+    // A blank row is a paragraph separator INSIDE the echoed multi-line input:
+    // webterm right-trims rows, so an indented-but-empty echo row arrives as ""
+    // and fails the indent test below. Accept it as a continuation (counting
+    // the newline it represents) while we still have user text to account for —
+    // otherwise paragraph 2+ of a multi-paragraph message breaks the walk early
+    // and lands in the turn region as fake toolNotes (claw-dfcm). The
+    // consumed<userText.length loop guard stops us at the echo→answer blank, and
+    // the marker break below stops us at the ⏺/❯ boundary, so we never swallow
+    // the answer or a genuine pre-answer tool note.
+    if (next.trimEnd() === "") {
+      consumed += 1;
+      i++;
+      continue;
+    }
+    // Content continuation row must start with the indent and not be a marker.
     if (!next.startsWith(indent)) break;
     if (next.startsWith(DEFAULT_ASSISTANT_MARKER) || next.startsWith(promptMarker)) break;
     consumed += next.trimEnd().length - indent.length;

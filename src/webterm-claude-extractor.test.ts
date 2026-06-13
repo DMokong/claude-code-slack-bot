@@ -278,6 +278,90 @@ describe("extractTurn — bottom-prompt boundary + model-row chrome (Sonnet-era 
   });
 });
 
+describe("extractTurn — multi-paragraph user echo (blank-line separator, claw-dfcm)", () => {
+  // webterm right-trims grid rows, so a blank paragraph separator inside a
+  // multi-line pasted message echoes as "" — which doesn't start with the
+  // echo indent. findEchoEnd used to break there, leaving paragraph 2+ in the
+  // turn region as fake toolNotes. Two failure modes:
+  //   (a) answered turn → the user's own paragraph 2 gets italicized in front
+  //       of the real answer.
+  //   (b) premature prompt-ready → the fake toolNotes make haveContent true,
+  //       so the bot posts the user's paragraph as "the answer" and the retry
+  //       guard (claw-etj7) is defeated, dropping the real answer.
+
+  it("mode (a): does not leak a multi-paragraph echo into the answer", () => {
+    const userInput =
+      "Here is the first paragraph of my question.\n\nHere is the second paragraph with more detail.";
+    const grid = [
+      "❯ Here is the first paragraph of my question.",
+      "",
+      "  Here is the second paragraph with more detail.",
+      "",
+      "⏺ Here is my answer to both paragraphs.",
+      "",
+      "✻ Cooked for 2s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Sonnet 4.6 │ 5%/200k │ $0.10 │ ⏱ 3s",
+    ].join("\n");
+    const turn = extractTurn(grid, userInput);
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).toBe("Here is my answer to both paragraphs.");
+    expect(turn!.toolNotes).toEqual([]);
+    expect(turn!.assistant).not.toContain("second paragraph");
+  });
+
+  it("mode (b): a premature prompt-ready with no ⏺ block stays empty + retryable", () => {
+    const userInput =
+      "First paragraph of the question here.\n\nSecond paragraph continues the thought.";
+    const grid = [
+      "❯ First paragraph of the question here.",
+      "",
+      "  Second paragraph continues the thought.",
+      "",
+      "✻ Pondering…",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Sonnet 4.6 │ 2%/200k │ $0.01 │ ⏱ 1s",
+    ].join("\n");
+    const turn = extractTurn(grid, userInput);
+    expect(turn).not.toBeNull();
+    // No real answer yet → both empty → haveContent is false → bot retries.
+    expect(turn!.assistant).toBe("");
+    expect(turn!.toolNotes).toEqual([]);
+  });
+
+  it("still captures genuine tool notes that precede the ⏺ block", () => {
+    // A real tool note (not echo) must still land in toolNotes — the fix must
+    // not over-consume past the echo into pre-answer tool indicators.
+    const userInput = "First paragraph.\n\nSecond paragraph.";
+    const grid = [
+      "❯ First paragraph.",
+      "",
+      "  Second paragraph.",
+      "",
+      "  Searched for 2 patterns (ctrl+o to expand)",
+      "",
+      "⏺ Found it in the config.",
+      "",
+      "✻ Cooked for 1s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Sonnet 4.6 │ 5%/200k │ $0.10 │ ⏱ 2s",
+    ].join("\n");
+    const turn = extractTurn(grid, userInput);
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).toBe("Found it in the config.");
+    expect(turn!.toolNotes).toEqual(["Searched for 2 patterns (ctrl+o to expand)"]);
+  });
+});
+
 describe("extractActivity — live turn status", () => {
   it("reports a spinner with elapsed seconds as 'thinking'", () => {
     const grid = ["❯ hi", "", "✻ Crunched for 7s", "", "──────", "❯", "──────"].join("\n");
