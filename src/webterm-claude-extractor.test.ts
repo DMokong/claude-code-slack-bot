@@ -362,6 +362,85 @@ describe("extractTurn — multi-paragraph user echo (blank-line separator, claw-
   });
 });
 
+describe("extractTurn — interleaved tool blocks (narrate→tool→conclude, claw-v3do)", () => {
+  // Modern claude (v2.1.173+) renders tool CALLS as their own "⏺ Tool(args)"
+  // block with a "⎿ result" summary row, interleaved with prose "⏺ …" blocks.
+  // The old extractor flipped inAssistant once at the first ⏺ and never reset,
+  // so the tool call + its ⎿ summary got glued into the assistant prose.
+  // buildBootCmd's "plain prose" instruction makes narration (and thus this
+  // shape) more likely.
+
+  it("keeps tool calls out of the prose and in toolNotes", () => {
+    const grid = [
+      "❯ check the config and tell me the port",
+      "",
+      "⏺ Let me look that up.",
+      "",
+      "⏺ Grep(port.*=)",
+      "  ⎿ Found 2 matches in config.ts",
+      "",
+      "⏺ The port is 7681, set in config.ts.",
+      "",
+      "✻ Cooked for 3s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Sonnet 4.6 │ 5%/200k │ $0.10 │ ⏱ 3s",
+    ].join("\n");
+    const turn = extractTurn(grid, "check the config and tell me the port");
+    expect(turn).not.toBeNull();
+    // Both prose blocks survive…
+    expect(turn!.assistant).toContain("Let me look that up.");
+    expect(turn!.assistant).toContain("The port is 7681, set in config.ts.");
+    // …and the tool call + its result are NOT glued into the answer.
+    expect(turn!.assistant).not.toContain("Grep(");
+    expect(turn!.assistant).not.toContain("Found 2 matches");
+    expect(turn!.assistant).not.toContain("⎿");
+    // The tool call is captured as a tool note.
+    expect(turn!.toolNotes.some((n) => /Grep\(/.test(n))).toBe(true);
+  });
+
+  it("classifies a single ⏺ Tool(args) block with no prose as toolNotes only", () => {
+    const grid = [
+      "❯ run the tests",
+      "",
+      "⏺ Bash(npm test)",
+      "  ⎿ 169 passing",
+      "",
+      "✻ Cooked for 8s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Sonnet 4.6 │ 5%/200k │ $0.10 │ ⏱ 9s",
+    ].join("\n");
+    const turn = extractTurn(grid, "run the tests");
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).toBe("");
+    expect(turn!.toolNotes.some((n) => /Bash\(npm test\)/.test(n))).toBe(true);
+  });
+
+  it("does not misclassify prose that merely contains parentheses as a tool call", () => {
+    const grid = [
+      "❯ summarize",
+      "",
+      "⏺ The third section (Environment) documents the setup.",
+      "",
+      "✻ Cooked for 1s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Sonnet 4.6 │ 5%/200k │ $0.10 │ ⏱ 2s",
+    ].join("\n");
+    const turn = extractTurn(grid, "summarize");
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).toBe("The third section (Environment) documents the setup.");
+    expect(turn!.toolNotes).toEqual([]);
+  });
+});
+
 describe("extractActivity — live turn status", () => {
   it("reports a spinner with elapsed seconds as 'thinking'", () => {
     const grid = ["❯ hi", "", "✻ Crunched for 7s", "", "──────", "❯", "──────"].join("\n");

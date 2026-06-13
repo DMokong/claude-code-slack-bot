@@ -74,6 +74,13 @@ function isAnswerEnd(t: string): boolean {
   return t.startsWith("※") || SPINNER_FOR_RE.test(t) || SPINNER_VERB_END_RE.test(t);
 }
 
+// A "⏺ Tool(args)" line — a tool INVOCATION, distinct from a "⏺ <prose>"
+// assistant block (claw-v3do). The tell: the first token after the marker is
+// immediately followed by "(" (e.g. "Grep(", "Bash(", "Read("). Real prose
+// never has that shape — its first token is followed by a space ("The third
+// section (Environment)…" doesn't match because "third" is followed by " ").
+const TOOL_LINE_BODY_RE = /^\w+\(/;
+
 // Locate where the bottom UI footer begins — the robust turn boundary. The
 // footer is always: [spinner] ─── / ❯[ + maybe a dimmed contextual suggestion,
 // possibly wrapped] / ─── / model-status-row / git / memory / permissions. The
@@ -246,7 +253,13 @@ export function extractTurn(
 
   const toolNotes: string[] = [];
   const assistantRaw: string[] = [];
-  let inAssistant = false;
+  // The turn is a sequence of blocks. Each "⏺ " marker starts a new one,
+  // classified as "tool" (⏺ Tool(args)) or "prose" (⏺ <answer text>); content
+  // before the first marker ("none") is a dimmed tool indicator. A block's
+  // continuation rows inherit its mode — so a tool call's "⎿ result" rows go to
+  // toolNotes, and the assistant body collects only prose blocks (claw-v3do).
+  let mode: "none" | "prose" | "tool" = "none";
+  let seenMarker = false;
   const bareMarker = promptMarker.trimEnd(); // "❯"
 
   for (let i = echoEnd + 1; i < turnEnd; i++) {
@@ -257,27 +270,37 @@ export function extractTurn(
     // (claude's dimmed input suggestion is dynamic and can leak otherwise).
     const t = line.trim();
     if (isPromptLine(t, bareMarker)) break;
-    // Once the answer has started, the FIRST footer marker (spinner or the
-    // new "※ recap" block) ends it — everything below is chrome/footer, no
-    // matter what dynamic content claude renders there. This is what keeps the
-    // recap, ghost suggestions, and status rows out of the answer robustly.
-    if (inAssistant && isAnswerEnd(t)) break;
+    // Once any ⏺ block has started, the FIRST footer marker (spinner or the
+    // new "※ recap" block) ends the turn — everything below is chrome/footer,
+    // no matter what dynamic content claude renders there. This is what keeps
+    // the recap, ghost suggestions, and status rows out robustly.
+    if (seenMarker && isAnswerEnd(t)) break;
     if (isChrome(line)) continue;
     if (line.startsWith(assistantMarker)) {
-      inAssistant = true;
-      // Replace the marker with an equal-width indent so the line's length
-      // reflects its true grid width (needed for the wrap-vs-newline test).
-      assistantRaw.push(" ".repeat(assistantMarker.length) + line.slice(assistantMarker.length));
+      seenMarker = true;
+      const body = line.slice(assistantMarker.length);
+      if (TOOL_LINE_BODY_RE.test(body.trimStart())) {
+        // A tool INVOCATION block (⏺ Grep(…)) — capture as a tool note, not
+        // prose, and route its continuation rows (⎿ result) to toolNotes too.
+        mode = "tool";
+        toolNotes.push(body.trim());
+      } else {
+        // A prose block (⏺ <answer text>). Replace the marker with an
+        // equal-width indent so the line's length reflects its true grid width
+        // (needed for the wrap-vs-newline test).
+        mode = "prose";
+        assistantRaw.push(" ".repeat(assistantMarker.length) + body);
+      }
       continue;
     }
-    if (!inAssistant) {
-      // Pre-assistant content — likely a tool-call indicator like
-      // "  Searched for 1 pattern (ctrl+o to expand)". Capture if non-blank.
-      const trimmed = line.trim();
-      if (trimmed !== "") toolNotes.push(trimmed);
-      continue;
+    // Non-marker line — a continuation of the current block.
+    if (mode === "prose") {
+      assistantRaw.push(line);
+    } else if (t !== "") {
+      // "tool" continuation (⎿ summary, wrapped args) or a pre-marker dimmed
+      // indicator like "Searched for 1 pattern (ctrl+o to expand)".
+      toolNotes.push(t);
     }
-    assistantRaw.push(line);
   }
 
   // Trim trailing blank lines from the assistant block.
