@@ -10,6 +10,10 @@ function makeMockWebterm() {
     sseController: ReadableStreamDefaultController<Uint8Array> | null;
     inputs: { kind: string; data?: string; keys?: string[] }[];
     text: string;
+    // Lines ABOVE the viewport (what GET /scrollback returns). The real
+    // webterm returns rows that scrolled off the top; concatenating
+    // scrollback + "\n" + text reconstructs the full transcript.
+    scrollback: string;
     title?: string;
     alive?: boolean;
     lastActivityAt?: number;
@@ -25,7 +29,7 @@ function makeMockWebterm() {
 
     if (method === "POST" && url.endsWith("/api/sessions")) {
       const id = `sess-${nextSessionId++}`;
-      sessions.set(id, { sseController: null, inputs: [], text: "", title: body?.title, alive: true });
+      sessions.set(id, { sseController: null, inputs: [], text: "", scrollback: "", title: body?.title, alive: true });
       return new Response(JSON.stringify({ id }), { status: 201, headers: { "content-type": "application/json" } });
     }
     if (method === "GET" && url.endsWith("/api/sessions")) {
@@ -60,6 +64,20 @@ function makeMockWebterm() {
       if (!s) return new Response("not found", { status: 404 });
       s.inputs.push(body);
       return new Response(null, { status: 204 });
+    }
+    const mScrollback = url.match(/\/api\/sessions\/([^\/?]+)\/scrollback/);
+    if (method === "GET" && mScrollback) {
+      const id = mScrollback[1];
+      const s = sessions.get(id);
+      if (!s) return new Response("not found", { status: 404 });
+      const u = new URL(url);
+      const from = Number(u.searchParams.get("from") ?? -200);
+      const to = Number(u.searchParams.get("to") ?? 0);
+      const lines = s.scrollback === "" ? [] : s.scrollback.split("\n");
+      return new Response(JSON.stringify({ from, to, lines }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
     const mText = url.match(/\/api\/sessions\/([^\/?]+)\/text/);
     if (method === "GET" && mText) {
@@ -101,8 +119,13 @@ function makeMockWebterm() {
       if (!s) throw new Error(`no session ${sessionId}`);
       s.text = text;
     },
+    setScrollback(sessionId: string, scrollback: string) {
+      const s = sessions.get(sessionId);
+      if (!s) throw new Error(`no session ${sessionId}`);
+      s.scrollback = scrollback;
+    },
     seedSession(id: string, title: string, text: string, lastActivityAt?: number) {
-      sessions.set(id, { sseController: null, inputs: [], text, title, alive: true, lastActivityAt });
+      sessions.set(id, { sseController: null, inputs: [], text, scrollback: "", title, alive: true, lastActivityAt });
     },
     onlySessionId() {
       const ids = Array.from(sessions.keys());
@@ -338,6 +361,55 @@ describe("WebtermRuntimeHandler", () => {
     await p;
     expect(slack.posted).toHaveLength(1);
     expect(slack.posted[0].text).toContain("the answer is 4");
+  });
+
+  it("recovers a tall response whose user echo scrolled off the viewport via /scrollback (claw-fcd9)", async () => {
+    // A long answer pushes the user echo off the top of the 40-row viewport.
+    // GET /text alone can't find the echo → extractTurn returns null → without
+    // a scrollback fallback the etj7 loop burns its retries and posts a
+    // misleading timeout. The handler must fetch /scrollback, prepend it, and
+    // extract the FULL answer (head from scrollback + tail from the viewport).
+    const req = { channelId: "C1", threadTs: "T1", text: "explain the architecture in detail", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    // Scrollback = rows that scrolled off the top: the echo + the answer head.
+    mock.setScrollback(id, [
+      "[webterm:test] user@host claudeclaw %",
+      "",
+      "❯ explain the architecture in detail",
+      "",
+      "⏺ The system has three main layers that work together.",
+      "",
+      "  The first layer handles input routing and request validation.",
+    ].join("\n"));
+    // Viewport = the tail of the answer + footer. NO user echo here.
+    mock.setText(id, [
+      "  The second layer manages persistent state and the worker pool.",
+      "",
+      "  The third layer renders output and streams results to the caller.",
+      "",
+      "✻ Cooked for 4s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Opus 4.8 (1M context) │ ⏱ 5s",
+    ].join("\n"));
+    mock.emitPromptReady(id);
+    await p;
+
+    expect(slack.posted).toHaveLength(1);
+    const text = slack.posted[0].text;
+    // Both the scrolled-off head and the visible tail must be present.
+    expect(text).toContain("first layer");
+    expect(text).toContain("third layer");
+    // No timeout/warning, no leaked prompt chrome.
+    expect(text).not.toMatch(/:warning:/);
+    expect(text).not.toContain("❯");
   });
 
   it("posts a warning to Slack when session creation fails", async () => {

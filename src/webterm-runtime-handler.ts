@@ -310,9 +310,9 @@ export class WebtermRuntimeHandler {
         return;
       }
 
-      let grid: string;
+      let turn: ExtractedTurn | null;
       try {
-        grid = await this.fetchGridText(session.id);
+        turn = await this.fetchAndExtract(session.id, req.text);
       } catch (err) {
         // M3: webterm can die between prompt-ready and the fetch. Without this
         // the error propagated past every warning path and the turn vanished.
@@ -322,7 +322,6 @@ export class WebtermRuntimeHandler {
         await deliver(`:warning: lost the webterm session mid-turn: \`${msg}\``);
         return;
       }
-      const turn = extractTurn(grid, req.text);
       // Both "null" (no user echo found) and "empty assistant block" can mean
       // the same thing: claude hasn't actually responded yet — prompt-ready
       // fired prematurely (claw-etj7). Treat both as retryable.
@@ -438,8 +437,7 @@ export class WebtermRuntimeHandler {
       await sleep(this.opts.extractStableMs);
       let turn: ExtractedTurn | null = null;
       try {
-        const grid = await this.fetchGridText(session.id);
-        turn = extractTurn(grid, userText);
+        turn = await this.fetchAndExtract(session.id, userText);
       } catch {
         break;
       }
@@ -685,6 +683,47 @@ export class WebtermRuntimeHandler {
     const res = await this.authedFetch(`${this.opts.webtermUrl}/api/sessions/${sessionId}/text`);
     if (!res.ok) throw new Error(`fetchGridText ${res.status}`);
     return await res.text();
+  }
+
+  // Fetch the rows that scrolled off the top of the viewport (claw-fcd9). The
+  // xterm headless buffer keeps 1000 lines; from=-1000,to=0 grabs everything
+  // above the current viewport top, contiguous with /text (to=0 ends exactly
+  // where the viewport begins, so scrollback + "\n" + viewport has no overlap
+  // and no gap). Best-effort: returns "" on any failure or empty history so the
+  // caller falls back cleanly.
+  private async fetchScrollback(sessionId: string): Promise<string> {
+    try {
+      const res = await this.authedFetch(
+        `${this.opts.webtermUrl}/api/sessions/${sessionId}/scrollback?from=-1000&to=0`,
+      );
+      if (!res.ok) return "";
+      const body = (await res.json()) as { lines?: string[] };
+      return Array.isArray(body.lines) ? body.lines.join("\n") : "";
+    } catch {
+      return "";
+    }
+  }
+
+  // Extract the turn from the session grid, recovering scrolled-off content
+  // when needed (claw-fcd9). extractTurn(viewport) returning null means the
+  // user echo isn't in the 40-row viewport — almost always a tall response
+  // that pushed the echo off the top. We then prepend the scrollback (the rows
+  // above the viewport) and re-extract from the full transcript. This
+  // distinguishes "echo scrolled off (turn likely complete)" from
+  // "echo present but assistant empty (genuine premature prompt-ready / etj7)":
+  // the latter returns a non-null turn and never triggers the scrollback fetch,
+  // so the caller's retry loop handles it without burning the 180s timeout.
+  //
+  // The primary viewport fetch can throw (webterm died mid-turn, M3) — that
+  // propagates so the caller posts a warning. The scrollback fetch is
+  // best-effort (swallowed); worst case we return null and the caller retries.
+  private async fetchAndExtract(sessionId: string, userText: string): Promise<ExtractedTurn | null> {
+    const viewport = await this.fetchGridText(sessionId);
+    const turn = extractTurn(viewport, userText);
+    if (turn !== null) return turn;
+    const scrollback = await this.fetchScrollback(sessionId);
+    if (!scrollback) return null;
+    return extractTurn(scrollback + "\n" + viewport, userText);
   }
 
   private async killWebtermSession(sessionId: string): Promise<void> {
