@@ -138,3 +138,70 @@ describe('ensureSingleInstance', () => {
 		expect(await waitForExit(fake)).toBe(true);
 	});
 });
+
+describe('graceful shutdown coexistence (claw-wb4a)', () => {
+	// ensureSingleInstance() runs at startup, BEFORE index.ts registers its
+	// gracefulShutdown SIGTERM handler. If ensureSingleInstance installs its own
+	// `SIGTERM -> process.exit(0)` listener, that listener (registered first)
+	// fires first on a launchd `kickstart -k` and force-exits the process before
+	// gracefulShutdown can drain in-flight webterm turns — silently dropping the
+	// reply (Slack already acked the event, so it never redelivers). The lock
+	// file must still be cleaned up, but via `process.on('exit')`, NOT a
+	// signal handler that preempts graceful shutdown.
+	it('does not preempt a later-registered SIGTERM handler that drains async', async () => {
+		const markerPath = join(testDir, 'drained.marker');
+		const modPath = join(__dirname, 'single-instance.ts');
+		// The fixture path carries the unique tag so ensureSingleInstance's own
+		// scan matches only this process (excluded as self) — no false conflict.
+		const fixturePath = join(testDir, `${testTag}-fakebot-graceful.ts`);
+		writeFileSync(
+			fixturePath,
+			[
+				`const { ensureSingleInstance } = require(${JSON.stringify(modPath)});`,
+				`const fs = require('fs');`,
+				`ensureSingleInstance({ pattern: new RegExp(${JSON.stringify(testTag)}), cwdContains: null });`,
+				// gracefulShutdown registered AFTER ensureSingleInstance — exactly
+				// the order index.ts uses. It drains asynchronously (the marker is
+				// written 50ms later), so a preempting process.exit(0) would beat it.
+				`process.on('SIGTERM', () => { setTimeout(() => { fs.writeFileSync(${JSON.stringify(markerPath)}, 'drained'); process.exit(0); }, 50); });`,
+				`setInterval(() => {}, 1000);`,
+				`console.log('READY');`,
+			].join('\n'),
+		);
+		const child = spawn(process.execPath, ['-r', 'tsx/cjs', fixturePath], {
+			stdio: ['ignore', 'pipe', 'ignore'],
+			env: { ...process.env, SLACK_BOT_LOCK_DIR: testDir, SLACK_BOT_LOG_DIR: 'off' },
+		});
+		childProcs.push(child);
+		await waitForStdout(child, 'READY', 8000);
+
+		process.kill(child.pid!, 'SIGTERM');
+
+		// The graceful handler must have run to completion (marker written);
+		// ensureSingleInstance must not have force-exited first.
+		expect(await waitForFile(markerPath, 3000)).toBe(true);
+	});
+});
+
+/** Wait for `child` to print `needle` on stdout. Rejects on timeout. */
+function waitForStdout(child: ChildProcess, needle: string, timeoutMs: number): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error(`child never printed "${needle}"`)), timeoutMs);
+		child.stdout?.on('data', (d: Buffer) => {
+			if (d.toString().includes(needle)) {
+				clearTimeout(timer);
+				resolve();
+			}
+		});
+	});
+}
+
+/** Poll for `path` to exist. Resolves true if it appears in time. */
+async function waitForFile(path: string, timeoutMs: number): Promise<boolean> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		if (existsSync(path)) return true;
+		await new Promise((r) => setTimeout(r, 25));
+	}
+	return false;
+}

@@ -44,6 +44,10 @@ const DEFAULT_IDLE_REAP_MS = 30 * 60_000;
 const DEFAULT_REAP_INTERVAL_MS = 5 * 60_000;
 const BOOT_TIMEOUT_MS = 60_000;
 const TURN_TIMEOUT_MS = 180_000;
+// On shutdown, how long to wait for in-flight turns to post their reply before
+// tearing down (claw-wb4a). Slack acked the event already, so a dropped reply
+// never redelivers — but we can't block launchd's SIGTERM forever either.
+const SHUTDOWN_DRAIN_MS = 5_000;
 // claude's first-run "trust this folder" dialog (claw-g790). It blocks the
 // REPL, --dangerously-skip-permissions does NOT bypass it, and it's
 // grid-stable so prompt-ready fires ON it. Detected at boot and accepted
@@ -767,6 +771,24 @@ export class WebtermRuntimeHandler {
     if (this.reapTimer) {
       clearInterval(this.reapTimer);
       this.reapTimer = null;
+    }
+    // Drain in-flight turns before tearing down (claw-wb4a). Mark each session
+    // dead FIRST so a turn blocked in waitForPromptReady throws and posts its
+    // warning (or, if it already has content, awaitRenderSettled exits and it
+    // delivers what it has) — then await those turns within a bounded window so
+    // their Slack writes complete. Setting alive=false is purely the local
+    // handler's view; it does NOT kill the webterm session, so claw-usdo title
+    // adoption after restart is unaffected.
+    const inFlight: Promise<void>[] = [];
+    for (const session of this.sessions.values()) {
+      session.alive = false;
+      if (session.inFlight) inFlight.push(session.inFlight);
+    }
+    if (inFlight.length > 0) {
+      await Promise.race([
+        Promise.allSettled(inFlight).then(() => {}),
+        sleep(SHUTDOWN_DRAIN_MS),
+      ]);
     }
     const tasks: Promise<void>[] = [];
     for (const session of this.sessions.values()) {

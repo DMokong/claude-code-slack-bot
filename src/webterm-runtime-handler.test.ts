@@ -714,6 +714,29 @@ describe("WebtermRuntimeHandler", () => {
     expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes(id))).toBeTruthy();
   });
 
+  it("shutdown() drains an in-flight turn so its reply still posts (claw-wb4a)", async () => {
+    // A launchd `kickstart -k` calls shutdown() mid-turn. Slack's Events API was
+    // acked the moment the message arrived, so it will NEVER redeliver — an
+    // in-flight turn whose reply we silently drop is lost forever. shutdown()
+    // must mark the session dead (so the blocked waitForPromptReady throws and
+    // the turn posts its warning) and await the in-flight turn before returning.
+    const req = { channelId: "C1", threadTs: "T1", text: "mid-flight", slack: slack.client };
+    const handlePromise = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot
+    // User input sent; the turn is now blocked waiting for a turn prompt-ready
+    // that the restart will never deliver.
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    await handler.shutdown();
+    await handlePromise;
+
+    // The in-flight turn resolved (posted a warning) instead of vanishing.
+    expect(slack.posted.some((m) => /:warning:/.test(m.text))).toBe(true);
+    expect(handler._sessionCount()).toBe(0);
+  });
+
   it("adopts a surviving webterm session for the thread instead of creating a new one", async () => {
     // A previous bot process created this session; its title carries the
     // threadKey and claude is still running inside (model status row present).

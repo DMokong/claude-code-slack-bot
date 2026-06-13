@@ -189,9 +189,17 @@ function writeLockFile(path: string): void {
 			/* ignore */
 		}
 	};
+	// Clean up the (diagnostic, non-authoritative) lock on normal exit only.
+	// Deliberately do NOT register SIGTERM/SIGINT -> process.exit(0) handlers:
+	// ensureSingleInstance() runs at startup, BEFORE index.ts installs its
+	// gracefulShutdown handler, so a signal listener registered here would fire
+	// FIRST on a launchd `kickstart -k` and force-exit before in-flight webterm
+	// turns could drain — silently dropping the reply (claw-wb4a). The app owns
+	// signal handling and calls process.exit(0) after draining, which fires this
+	// 'exit' listener. A SIGTERM during the brief pre-gracefulShutdown startup
+	// window leaves a stale lock, which is harmless — the running-process scan
+	// (findOtherInstances), not the lock file, enforces single-instance.
 	process.on('exit', remove);
-	process.on('SIGTERM', () => process.exit(0));
-	process.on('SIGINT', () => process.exit(0));
 }
 
 /**
