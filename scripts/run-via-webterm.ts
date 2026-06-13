@@ -157,7 +157,17 @@ async function createAndBoot(): Promise<string> {
     await sleep(1000);
     const g = await gridText(id);
     if (TRUST_DIALOG.test(g)) { log("accepting trust-folder dialog"); await enter(id); continue; }
-    if (MODEL_ROW.test(g) && g.includes(PROMPT_MARKER)) { log("booted"); return id; }
+    if (MODEL_ROW.test(g) && g.includes(PROMPT_MARKER)) {
+      // MCP servers (Gmail, Slack, Calendar, …) connect ASYNC after the prompt
+      // box appears — they're "still connecting" for several seconds. Sending
+      // the job prompt before they're ready makes its tool calls fail. Wait a
+      // settle window so MCP is connected before the turn (a fresh boot only;
+      // adopted warm sessions already have MCP up).
+      const settle = Number(arg("mcp-settle-ms", "12000"));
+      log(`booted; settling ${settle}ms for MCP servers to connect`);
+      await sleep(settle);
+      return id;
+    }
   }
   await kill(id);
   throw new Error("claude did not boot within 60s");
