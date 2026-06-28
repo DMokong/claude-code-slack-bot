@@ -25,8 +25,15 @@ export interface ExtractOptions {
   assistantMarker?: string;
 }
 
+// One ordered block of the turn: an assistant prose block or a tool block.
+export interface Segment {
+  kind: "prose" | "tool";
+  text: string;
+}
+
 const DEFAULT_PROMPT_MARKER = "❯ ";
 const DEFAULT_ASSISTANT_MARKER = "⏺ ";
+const SPINNER_GLYPHS = "✻✶✳✢✽⠂⠐⠈⠁·";
 
 // Lines we recognize as "screen chrome" that shouldn't appear in extracted
 // content. Each rule is independent; a line matching ANY rule is dropped.
@@ -224,6 +231,72 @@ function unwrapWordWrap(lines: string[], indent: number, cols: number): string[]
   return out;
 }
 
+// One source of truth for the echo→footer walk. Returns the raw prose lines
+// (flat, marker-stripped — what extractTurn unwraps as one block, preserving
+// today's exact output), the flat tool-note lines (what extractTurn returns as
+// toolNotes), and the ORDERED segments (what extractSegments returns). The
+// critical change vs. the old inline loop: a ※/spinner line no longer BREAKS
+// the walk — it enters "chrome" mode (skip the line and its indented
+// continuations until the next ⏺), so real content rendered after a tip
+// survives (claw-gxzq).
+interface WalkResult {
+  proseRaw: string[];          // flat, for extractTurn's single-block unwrap
+  toolNotes: string[];         // flat, for extractTurn
+  segments: { kind: "prose" | "tool"; raw: string[] }[]; // ordered
+}
+
+function walkTurn(
+  lines: string[],
+  echoEnd: number,
+  turnEnd: number,
+  assistantMarker: string,
+  promptMarker: string,
+): WalkResult {
+  const proseRaw: string[] = [];
+  const toolNotes: string[] = [];
+  const segments: { kind: "prose" | "tool"; raw: string[] }[] = [];
+  let mode: "none" | "prose" | "tool" | "chrome" = "none";
+  const bareMarker = promptMarker.trimEnd(); // "❯"
+  const cur = () => segments[segments.length - 1];
+
+  for (let i = echoEnd + 1; i < turnEnd; i++) {
+    const line = lines[i];
+    const t = line.trim();
+    // Hard stop at the bottom input box (we are already past the user echo).
+    if (isPromptLine(t, bareMarker)) break;
+    // ※ tip/recap or a spinner line: SKIP it and its continuations (chrome),
+    // do NOT terminate — content after it is still the answer.
+    if (isAnswerEnd(t)) { mode = "chrome"; continue; }
+    if (isChrome(line)) continue;
+    if (line.startsWith(assistantMarker)) {
+      const body = line.slice(assistantMarker.length);
+      if (TOOL_LINE_BODY_RE.test(body.trimStart())) {
+        mode = "tool";
+        toolNotes.push(body.trim());
+        segments.push({ kind: "tool", raw: [body.trim()] });
+      } else {
+        mode = "prose";
+        const indented = " ".repeat(assistantMarker.length) + body;
+        proseRaw.push(indented);
+        segments.push({ kind: "prose", raw: [indented] });
+      }
+      continue;
+    }
+    // Continuation of the current block.
+    if (mode === "prose") {
+      proseRaw.push(line);
+      cur().raw.push(line);
+    } else if (mode === "tool") {
+      if (t !== "") { toolNotes.push(t); cur().raw.push(t); }
+    } else if (mode === "none") {
+      // Pre-marker dimmed indicator ("Searched for 1 pattern …").
+      if (t !== "") toolNotes.push(t);
+    }
+    // mode === "chrome": skip.
+  }
+  return { proseRaw, toolNotes, segments };
+}
+
 export function extractTurn(
   gridText: string,
   userInputText: string,
@@ -251,57 +324,8 @@ export function extractTurn(
     turnEnd = bottomRow > echoEnd ? bottomRow : lines.length;
   }
 
-  const toolNotes: string[] = [];
-  const assistantRaw: string[] = [];
-  // The turn is a sequence of blocks. Each "⏺ " marker starts a new one,
-  // classified as "tool" (⏺ Tool(args)) or "prose" (⏺ <answer text>); content
-  // before the first marker ("none") is a dimmed tool indicator. A block's
-  // continuation rows inherit its mode — so a tool call's "⎿ result" rows go to
-  // toolNotes, and the assistant body collects only prose blocks (claw-v3do).
-  let mode: "none" | "prose" | "tool" = "none";
-  let seenMarker = false;
-  const bareMarker = promptMarker.trimEnd(); // "❯"
-
-  for (let i = echoEnd + 1; i < turnEnd; i++) {
-    const line = lines[i];
-    // Hard stop at the bottom input box. We're already PAST the user echo, so
-    // any prompt-marker line here is the input box — never answer content.
-    // This is the backstop when the footer wasn't fully rendered at extraction
-    // (claude's dimmed input suggestion is dynamic and can leak otherwise).
-    const t = line.trim();
-    if (isPromptLine(t, bareMarker)) break;
-    // Once any ⏺ block has started, the FIRST footer marker (spinner or the
-    // new "※ recap" block) ends the turn — everything below is chrome/footer,
-    // no matter what dynamic content claude renders there. This is what keeps
-    // the recap, ghost suggestions, and status rows out robustly.
-    if (seenMarker && isAnswerEnd(t)) break;
-    if (isChrome(line)) continue;
-    if (line.startsWith(assistantMarker)) {
-      seenMarker = true;
-      const body = line.slice(assistantMarker.length);
-      if (TOOL_LINE_BODY_RE.test(body.trimStart())) {
-        // A tool INVOCATION block (⏺ Grep(…)) — capture as a tool note, not
-        // prose, and route its continuation rows (⎿ result) to toolNotes too.
-        mode = "tool";
-        toolNotes.push(body.trim());
-      } else {
-        // A prose block (⏺ <answer text>). Replace the marker with an
-        // equal-width indent so the line's length reflects its true grid width
-        // (needed for the wrap-vs-newline test).
-        mode = "prose";
-        assistantRaw.push(" ".repeat(assistantMarker.length) + body);
-      }
-      continue;
-    }
-    // Non-marker line — a continuation of the current block.
-    if (mode === "prose") {
-      assistantRaw.push(line);
-    } else if (t !== "") {
-      // "tool" continuation (⎿ summary, wrapped args) or a pre-marker dimmed
-      // indicator like "Searched for 1 pattern (ctrl+o to expand)".
-      toolNotes.push(t);
-    }
-  }
+  const { proseRaw, toolNotes } = walkTurn(lines, echoEnd, turnEnd, assistantMarker, promptMarker);
+  const assistantRaw = proseRaw;
 
   // Trim trailing blank lines from the assistant block.
   while (assistantRaw.length > 0 && assistantRaw[assistantRaw.length - 1].trim() === "") {
@@ -338,7 +362,6 @@ export function formatTurnForSlack(turn: ExtractedTurn): string {
 // extractActivity turns the CURRENT grid into a short human status so the bot
 // can chat.update a placeholder message while the turn runs.
 
-const SPINNER_GLYPHS = "✻✶✳✢✽⠂⠐⠈⠁·";
 const SPINNER_ELAPSED_RE = new RegExp(`^[${SPINNER_GLYPHS}]\\s+\\S+\\s+for\\s+(\\d+)s$`);
 const SPINNER_VERB_RE = new RegExp(`^[${SPINNER_GLYPHS}]\\s+(\\S+…)$`);
 // Tool-call line: "⏺ Bash(…)" — a capitalized tool name immediately followed

@@ -212,6 +212,32 @@ describe("extractTurn — bottom-prompt boundary + model-row chrome (Sonnet-era 
     expect(turn!.assistant).not.toContain("Sonnet");
   });
 
+  it("does not truncate assistant content that follows a ※ tip line (claw-gxzq)", () => {
+    const grid = [
+      "[webterm:test] user@host claudeclaw %",
+      "",
+      "❯ do the thing",
+      "",
+      "⏺ Starting the first part of the work.",
+      "",
+      "※ Tip: Send a message while Claude works to steer it.",
+      "",
+      "⏺ And here is the second part after the tip.",
+      "",
+      "✻ Cooked for 2s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Opus 4.8 (1M context) │ ⏱ 5s",
+    ].join("\n");
+    const turn = extractTurn(grid, "do the thing");
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).toContain("first part");
+    expect(turn!.assistant).toContain("second part after the tip");
+    expect(turn!.assistant).not.toContain("Tip:");
+  });
+
   it("handles a ghost suggestion that wraps onto multiple box lines", () => {
     const g = [
       "❯ summarize the repo",
