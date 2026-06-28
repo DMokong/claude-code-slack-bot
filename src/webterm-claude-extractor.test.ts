@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { extractTurn, formatTurnForSlack, extractActivity } from "./webterm-claude-extractor";
+import { extractTurn, formatTurnForSlack, extractActivity, extractSegments, isGridIdle } from "./webterm-claude-extractor";
 
 const FIXTURE_DIR = join(__dirname, "..", "test", "fixtures", "webterm-grids");
 
@@ -524,5 +524,75 @@ describe("formatTurnForSlack", () => {
 
   it("emits empty string when the turn has no content", () => {
     expect(formatTurnForSlack({ assistant: "", toolNotes: [] })).toBe("");
+  });
+});
+
+describe("extractSegments", () => {
+  it("returns prose and tool blocks in render order, tips filtered", () => {
+    const grid = [
+      "[webterm:test] user@host claudeclaw %",
+      "",
+      "❯ build it",
+      "",
+      "⏺ First, here's the plan.",
+      "",
+      "⏺ Bash(npm run build)",
+      "  ⎿ build ok",
+      "",
+      "※ Tip: steer me anytime.",
+      "",
+      "⏺ Done — build is green.",
+      "",
+      "✻ Cooked for 9s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Opus 4.8 (1M context) │ ⏱ 9s",
+    ].join("\n");
+    const segs = extractSegments(grid, "build it");
+    expect(segs.map((s) => s.kind)).toEqual(["prose", "tool", "prose"]);
+    expect(segs[0].text).toContain("here's the plan");
+    expect(segs[1].text).toContain("Bash(npm run build)");
+    expect(segs[2].text).toContain("build is green");
+    expect(segs.some((s) => s.text.includes("Tip:"))).toBe(false);
+  });
+
+  it("returns [] when the user echo is not present", () => {
+    expect(extractSegments("no echo here", "missing")).toEqual([]);
+  });
+});
+
+describe("isGridIdle", () => {
+  it("is true at a bare prompt with no active spinner", () => {
+    const grid = [
+      "⏺ all done.",
+      "",
+      "✻ Cooked for 3s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Opus 4.8 (1M context) │ ⏱ 3s",
+    ].join("\n");
+    expect(isGridIdle(grid)).toBe(true);
+  });
+
+  it("is false while an active spinner is present (claude working)", () => {
+    const grid = [
+      "❯ count to 45",
+      "",
+      "✻ Tinkering…",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Sonnet 4.6 │ ⏱ 1s",
+    ].join("\n");
+    expect(isGridIdle(grid)).toBe(false);
+  });
+
+  it("is false when there is no input box (bare shell)", () => {
+    expect(isGridIdle("[webterm:test] user@host claudeclaw %")).toBe(false);
   });
 });

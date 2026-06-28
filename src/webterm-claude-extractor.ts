@@ -341,6 +341,67 @@ export function extractTurn(
   return { assistant, toolNotes };
 }
 
+// Ordered view of the turn for streaming relay (claw-gxzq). Same boundary and
+// walk as extractTurn, but returns each ⏺ block as its own Segment in render
+// order. Prose blocks are unwrapped individually; tool blocks keep their raw
+// lines joined. Returns [] when the user echo can't be located.
+export function extractSegments(
+  gridText: string,
+  userInputText: string,
+  opts: ExtractOptions = {},
+): Segment[] {
+  const promptMarker = opts.promptMarker ?? DEFAULT_PROMPT_MARKER;
+  const assistantMarker = opts.assistantMarker ?? DEFAULT_ASSISTANT_MARKER;
+  const lines = gridText.split("\n");
+
+  const echoStart = findLastUserEcho(lines, userInputText, promptMarker);
+  if (echoStart === -1) return [];
+  const echoEnd = findEchoEnd(lines, echoStart, userInputText, promptMarker);
+
+  const footerStart = findFooterStart(lines);
+  let turnEnd: number;
+  if (footerStart > echoEnd) {
+    turnEnd = footerStart;
+  } else {
+    const bottomRow = findBottomPromptRow(lines, promptMarker);
+    turnEnd = bottomRow > echoEnd ? bottomRow : lines.length;
+  }
+
+  const { segments } = walkTurn(lines, echoEnd, turnEnd, assistantMarker, promptMarker);
+  const cols = Math.max(40, ...lines.map((l) => l.length));
+  const out: Segment[] = [];
+  for (const seg of segments) {
+    if (seg.kind === "prose") {
+      const raw = [...seg.raw];
+      while (raw.length > 0 && raw[raw.length - 1].trim() === "") raw.pop();
+      const text = unwrapWordWrap(raw, assistantMarker.length, cols)
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      if (text) out.push({ kind: "prose", text });
+    } else {
+      const text = seg.raw.join("\n").trim();
+      if (text) out.push({ kind: "tool", text });
+    }
+  }
+  return out;
+}
+
+// An active spinner is present-continuous ("✻ Tinkering…") — claude is working.
+// The past-tense elapsed line ("✻ Cooked for 3s") is a post-turn artifact and
+// does NOT count as active.
+const ACTIVE_SPINNER_RE = new RegExp(`^\\s*[${SPINNER_GLYPHS}]\\s+\\S+…\\s*$`);
+
+// True when the grid shows claude idle at its input prompt: the bottom input
+// box is present AND no active spinner is rendered. Used by the relay loop to
+// decide a turn is finished (claw-gxzq).
+export function isGridIdle(gridText: string, opts: ExtractOptions = {}): boolean {
+  const promptMarker = opts.promptMarker ?? DEFAULT_PROMPT_MARKER;
+  const lines = gridText.split("\n");
+  if (lines.some((l) => ACTIVE_SPINNER_RE.test(l))) return false;
+  return findBottomPromptRow(lines, promptMarker) !== -1;
+}
+
 // Format the extracted turn as a single Slack mrkdwn-safe string.
 // v1 is intentionally simple: tool notes prefix as italic, assistant body
 // passes through as-is. Slack mrkdwn renders newlines as visible line breaks,
