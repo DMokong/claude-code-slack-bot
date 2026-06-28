@@ -16,7 +16,7 @@
 
 import type { WebClient } from "@slack/web-api";
 import { Logger } from "./logger";
-import { extractTurn, formatTurnForSlack, extractActivity, type ExtractedTurn } from "./webterm-claude-extractor";
+import { extractTurn, extractSegments, isGridIdle, formatTurnForSlack, extractActivity, type ExtractedTurn, type Segment } from "./webterm-claude-extractor";
 
 const DEFAULT_WEBTERM_URL = "http://127.0.0.1:7681";
 const DEFAULT_CLAUDE_CMD = "claude --dangerously-skip-permissions";
@@ -44,6 +44,18 @@ const DEFAULT_IDLE_REAP_MS = 30 * 60_000;
 const DEFAULT_REAP_INTERVAL_MS = 5 * 60_000;
 const BOOT_TIMEOUT_MS = 60_000;
 const TURN_TIMEOUT_MS = 180_000;
+// The relay loop has no fixed turn cap (long agentic tasks stream for minutes).
+// Instead it aborts only when the session looks WEDGED: the grid stopped
+// changing, no active spinner, and claude is not idle at the prompt, for this
+// long. A live tool run keeps a spinner up, so it never trips this (claw-gxzq).
+const DEFAULT_SLIDING_INACTIVITY_MS = 5 * 60_000;
+// Consecutive idle observations required before declaring the turn finished —
+// guards against a transient idle-looking frame mid-render.
+const IDLE_STABLE_POLLS = 2;
+// Present-continuous spinner (e.g. "✻ Working…", "✶ Pouncing…") signals that
+// claude has moved past the current ⏺ blocks — they are all settled. Distinct
+// from the past-tense elapsed line ("✻ Cooked for 3s") which is post-turn.
+const RELAY_ACTIVE_SPINNER_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+…\s*$/m;
 // How often to re-extract the grid while waiting for the answer (claw-fcd9/etj7
 // fix A). The turn loop polls on this interval AND wakes early on a prompt-ready
 // fire — so a MISSING post-completion prompt-ready (the etj7 non-deterministic
@@ -96,6 +108,9 @@ export interface WebtermRuntimeOpts {
   // How often the turn loop re-extracts the grid while waiting for the answer
   // (claw-fcd9/etj7 fix A). Tests set this small for speed.
   turnPollMs?: number;
+  // Sliding inactivity window for the relay loop (claw-gxzq): if the grid
+  // doesn't change for this long and the session isn't idle, abort as wedged.
+  slidingInactivityMs?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -157,6 +172,7 @@ export class WebtermRuntimeHandler {
       streamStatus: opts.streamStatus ?? false,
       statusPollMs: opts.statusPollMs ?? DEFAULT_STATUS_POLL_MS,
       turnPollMs: opts.turnPollMs ?? DEFAULT_TURN_POLL_MS,
+      slidingInactivityMs: opts.slidingInactivityMs ?? DEFAULT_SLIDING_INACTIVITY_MS,
       fetchImpl: opts.fetchImpl ?? fetch,
     };
     const baseFetch = this.opts.fetchImpl;
@@ -305,61 +321,82 @@ export class WebtermRuntimeHandler {
     // rising-edge prompt-ready detector, so a count snapshotted before the
     // paste would treat that paste-induced fire as the turn's response and
     // burn a retry. The Enter we just sent guarantees a real post-turn fire.
-    // POLL-driven, with prompt-ready as a fast-path accelerator (claw-fcd9/etj7
-    // fix A). The earlier loops GATED extraction on a prompt-ready fire, but the
-    // detector fires a NON-DETERMINISTIC number of times and can miss the
-    // post-completion fire entirely — stranding the turn until the deadline.
-    // Instead, re-extract the grid every turnPollMs, AND wake early on a fire,
-    // until a settled answer appears (premature/empty extractions just keep
-    // polling) or the turn deadline passes. prompt-ready is now an optimization,
-    // not a requirement, so a missing fire no longer loses the turn.
-    const turnDeadline = Date.now() + TURN_TIMEOUT_MS;
-    let lastCount = session.promptReadyCount;
+    //
+    // Continuous relay (claw-gxzq): keep watching the grid and post each new
+    // settled prose block as it appears, until claude returns to a stable idle
+    // prompt. No fixed cap — only a sliding inactivity guard for wedged sessions.
+    // prompt-ready is an optimization (fast-path wake); the poll timer catches
+    // turns where it never fires (claw-fcd9/etj7).
+    let postedSegments = 0;            // prose blocks already delivered
+    let idleObservations = 0;
+    let lastGrid = "";
+    let lastChangeAt = Date.now();
+    let lastBaseline = session.promptReadyCount;
 
-    while (Date.now() < turnDeadline) {
-      // Wake on the next prompt-ready OR after turnPollMs, whichever is first.
-      await this.waitForPromptReadyOrPoll(
-        session,
-        lastCount + 1,
-        Math.min(this.opts.turnPollMs, Math.max(0, turnDeadline - Date.now())),
-      );
-      lastCount = session.promptReadyCount;
+    for (;;) {
+      await this.waitForPromptReadyOrPoll(session, lastBaseline + 1, this.opts.turnPollMs);
+      lastBaseline = session.promptReadyCount;
       if (!session.alive) {
-        this.logger.error("Session died mid-turn", { sessionId: session.id });
         await stopStatus();
-        await deliver(":warning: lost the webterm session mid-turn.");
+        // Deliver whatever we have; warn only if nothing was posted.
+        if (postedSegments === 0) await deliver(":warning: lost the webterm session mid-turn.");
         return;
       }
 
-      let turn: ExtractedTurn | null;
+      let grid: string;
       try {
-        turn = await this.fetchAndExtract(session.id, req.text);
+        grid = await this.fetchGridForRelay(session.id, req.text);
       } catch (err) {
-        // M3: webterm can die between the poll and the fetch. Without this the
-        // error propagated past every warning path and the turn vanished.
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.error("grid fetch failed mid-turn", { sessionId: session.id, error: msg });
         await stopStatus();
-        await deliver(`:warning: lost the webterm session mid-turn: \`${msg}\``);
+        if (postedSegments === 0) await deliver(`:warning: lost the webterm session mid-turn: \`${msg}\``);
         return;
       }
-      // Both "null" (no user echo found) and "empty assistant block" mean the
-      // same thing: claude hasn't produced the answer yet (still thinking /
-      // rendering). Keep polling.
-      const haveContent =
-        turn !== null && (turn.assistant.trim().length > 0 || turn.toolNotes.length > 0);
-      if (haveContent) {
-        const settled = await this.awaitRenderSettled(session, req.text, turn!);
-        const slackText = formatTurnForSlack(settled);
+
+      if (grid !== lastGrid) { lastGrid = grid; lastChangeAt = Date.now(); }
+
+      // Cache the idle check so we call isGridIdle once per iteration.
+      const idle = isGridIdle(grid);
+
+      // Turn-end: idle prompt, stable across IDLE_STABLE_POLLS observations.
+      // Stop the status loop on the FIRST idle observation — BEFORE
+      // relayNewSegments delivers any block — so a still-running status loop
+      // can't overwrite the delivered answer during the second-observation wait.
+      if (idle) {
+        idleObservations++;
+        if (idleObservations === 1) await stopStatus();
+      } else {
+        idleObservations = 0;
+      }
+
+      // Post any NEW prose blocks that have settled. extractSegments filters
+      // tips/recap/spinner; tool blocks advance the status line only.
+      postedSegments = await this.relayNewSegments(session, req, grid, statusTs, deliver, postedSegments);
+
+      if (idle && idleObservations >= IDLE_STABLE_POLLS) {
+        // stopStatus was called above at idleObservations === 1.
+        if (postedSegments === 0) {
+          // Idle but nothing extracted — fall back to the whole-turn extractor
+          // (covers answers with no ⏺ prose, and keeps the warning behavior).
+          const turn = extractTurn(grid, req.text);
+          const text = turn ? formatTurnForSlack(turn) : "";
+          await deliver(text || ":warning: claude did not produce a visible response.");
+        }
+        return;
+      }
+
+      // Wedged-session guard.
+      if (
+        !idle &&
+        Date.now() - lastChangeAt > this.opts.slidingInactivityMs
+      ) {
+        this.logger.error("Turn wedged — no grid change within inactivity window", { sessionId: session.id });
         await stopStatus();
-        await deliver(slackText);
+        if (postedSegments === 0) await deliver(":warning: claude stopped responding.");
         return;
       }
     }
-
-    this.logger.error("Turn produced no answer within deadline", { sessionId: session.id });
-    await stopStatus();
-    await deliver(":warning: claude did not produce a response in time.");
   }
 
   // Resolve when promptReadyCount reaches `target` (fast path), the session
@@ -483,6 +520,52 @@ export class WebtermRuntimeHandler {
       prev = cur;
     }
     return last;
+  }
+
+  // Returns the relay transcript: viewport, or scrollback+viewport when the
+  // user echo scrolled off the 40-row viewport (claw-fcd9). Mirrors
+  // fetchAndExtract's recovery but returns the TEXT so the caller can both
+  // extractSegments and isGridIdle from one fetch.
+  private async fetchGridForRelay(sessionId: string, userText: string): Promise<string> {
+    const viewport = await this.fetchGridText(sessionId);
+    if (extractSegments(viewport, userText).length > 0) return viewport;
+    const scrollback = await this.fetchScrollback(sessionId);
+    if (!scrollback) return viewport;
+    return scrollback + "\n" + viewport;
+  }
+
+  // Post prose blocks that appeared since `postedSegments`. Tool blocks don't
+  // post (the status line shows tool activity); they still count toward the
+  // high-water mark so a later prose block isn't mis-indexed. Returns the new
+  // high-water mark (count of segments observed). Discrete-post path: each
+  // settled prose block is its own message. The streaming path (Task 3)
+  // overrides delivery to grow-then-finalize.
+  private async relayNewSegments(
+    session: WebtermSession,
+    req: HandleMessageOpts,
+    grid: string,
+    statusTs: string | undefined,
+    deliver: (text: string) => Promise<void>,
+    postedSegments: number,
+  ): Promise<number> {
+    const segments = extractSegments(grid, req.text);
+    // A present-continuous spinner ("✻ Working…") means claude has moved past
+    // the rendered ⏺ blocks — they are all settled. Without a spinner and not
+    // yet idle, the trailing block may still be mid-render: hold it back.
+    const hasActiveSpinner = RELAY_ACTIVE_SPINNER_RE.test(grid);
+    const settledCount = (isGridIdle(grid) || hasActiveSpinner)
+      ? segments.length
+      : Math.max(0, segments.length - 1);
+    for (let i = postedSegments; i < settledCount; i++) {
+      const seg = segments[i];
+      if (seg.kind === "prose") {
+        // statusTs is reused only for the FIRST delivered block (resolves the
+        // "🐾 on it…" placeholder in place); subsequent blocks post fresh.
+        if (statusTs && i === 0) await deliver(seg.text);
+        else await this.postReply(req, seg.text);
+      }
+    }
+    return Math.max(postedSegments, settledCount);
   }
 
   // Wait for the boot prompt-ready, but verify the grid is actually the

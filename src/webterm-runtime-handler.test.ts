@@ -857,6 +857,109 @@ describe("WebtermRuntimeHandler", () => {
     // The dead-claude session was cleaned up.
     expect(mock.calls.find((c) => c.method === "DELETE" && c.url.includes("sess-dead-claude"))).toBeTruthy();
   });
+
+  it("relays each prose block as its own message, including content after a ※ tip (claw-gxzq)", async () => {
+    const req = { channelId: "C1", threadTs: "T1", text: "two parts", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    // Block one renders (still working: active spinner, no idle prompt yet).
+    mock.setText(id, [
+      "❯ two parts",
+      "",
+      "⏺ Here is the first block.",
+      "",
+      "✻ Working…",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Opus 4.8 │ ⏱ 1s",
+    ].join("\n"));
+    await waitFor(() => slack.posted.some((m) => m.text.includes("first block")));
+
+    // A tip appears, then a second block — and claude goes idle.
+    mock.setText(id, [
+      "❯ two parts",
+      "",
+      "⏺ Here is the first block.",
+      "",
+      "※ Tip: steer me anytime.",
+      "",
+      "⏺ Here is the second block after the tip.",
+      "",
+      "✻ Cooked for 2s",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Opus 4.8 │ ⏱ 2s",
+    ].join("\n"));
+    mock.emitPromptReady(id);
+    await p;
+
+    expect(slack.posted.some((m) => m.text.includes("first block"))).toBe(true);
+    expect(slack.posted.some((m) => m.text.includes("second block after the tip"))).toBe(true);
+    expect(slack.posted.every((m) => !m.text.includes("Tip:"))).toBe(true);
+  });
+
+  it("streams a long multi-step task with no fixed turn cap (claw-gxzq)", async () => {
+    handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 15, slidingInactivityMs: 10_000,
+    });
+    const req = { channelId: "C1", threadTs: "T1", text: "do a long job", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    const working = (blocks: string[]) => [
+      "❯ do a long job", "",
+      ...blocks.flatMap((b) => [`⏺ ${b}`, ""]),
+      "✻ Churning…",                      // active spinner → not idle
+      "────────────────────────────────────────", "❯",
+      "────────────────────────────────────────", "   Opus 4.8 │ ⏱ 9s",
+    ].join("\n");
+
+    mock.setText(id, working(["Step 1 complete."]));
+    await waitFor(() => slack.posted.some((m) => m.text.includes("Step 1 complete")));
+    mock.setText(id, working(["Step 1 complete.", "Step 2 complete."]));
+    await waitFor(() => slack.posted.some((m) => m.text.includes("Step 2 complete")));
+
+    // Finish: spinner gone, idle prompt.
+    mock.setText(id, [
+      "❯ do a long job", "",
+      "⏺ Step 1 complete.", "", "⏺ Step 2 complete.", "", "⏺ All steps done.", "",
+      "✻ Cooked for 30s",
+      "────────────────────────────────────────", "❯",
+      "────────────────────────────────────────", "   Opus 4.8 │ ⏱ 30s",
+    ].join("\n"));
+    mock.emitPromptReady(id);
+    await p;
+    expect(slack.posted.some((m) => m.text.includes("All steps done"))).toBe(true);
+    expect(slack.posted.every((m) => !/:warning:/.test(m.text))).toBe(true);
+  });
+
+  it("aborts a wedged session after the sliding inactivity window (claw-gxzq)", async () => {
+    handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 10, slidingInactivityMs: 60,
+    });
+    const req = { channelId: "C1", threadTs: "T1", text: "hang please", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    // Frozen, non-idle, no spinner, no ⏺ → wedged.
+    mock.setText(id, ["❯ hang please", "", "  (no output)"].join("\n"));
+    await p;
+    expect(slack.posted.some((m) => /:warning:.*stopped responding/.test(m.text))).toBe(true);
+  });
 });
 
 describe("live-activity streaming (claw-1ta5)", () => {
