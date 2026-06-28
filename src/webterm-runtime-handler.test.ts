@@ -1081,6 +1081,75 @@ describe("live-activity streaming (claw-1ta5)", () => {
     await waitFor(() => slack.textOf("msg-1")?.includes(":warning:") ?? false);
     expect(slack.posted).toHaveLength(1); // placeholder reused for the error
   });
+
+  it("grows a message per prose block and opens a fresh message after a tool boundary (claw-gxzq)", async () => {
+    const handlePromise = handler.handleMessage({ channelId: "C1", threadTs: "T1", text: "stream please", slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    // Placeholder posted.
+    expect(slack.posted).toHaveLength(1);
+    expect(slack.posted[0].text).toBe("_🐾 on it…_");
+
+    // Block one grows in the placeholder message (msg-1) while working.
+    const working = (lines: string[]) => [
+      "❯ stream please", "", ...lines, "",
+      "✻ Working…",
+      "────────────────────────────────────────", "❯",
+      "────────────────────────────────────────", "   Opus 4.8 │ ⏱ 1s",
+    ].join("\n");
+    mock.setText(id, working(["⏺ Block one, partial…"]));
+    await waitFor(() => (slack.textOf("msg-1") ?? "").includes("Block one"));
+
+    // A tool runs (finalizes block one), then block two starts → fresh message.
+    mock.setText(id, working(["⏺ Block one, partial… now complete.", "", "⏺ Bash(ls)", "  ⎿ ok", "", "⏺ Block two here."]));
+    await waitFor(() => slack.posted.length >= 2 && slack.posted.some((m) => m.text.includes("Block two")));
+
+    // Idle finish.
+    mock.setText(id, [
+      "❯ stream please", "",
+      "⏺ Block one, partial… now complete.", "", "⏺ Bash(ls)", "  ⎿ ok", "", "⏺ Block two here.", "",
+      "✻ Cooked for 3s",
+      "────────────────────────────────────────", "❯",
+      "────────────────────────────────────────", "   Opus 4.8 │ ⏱ 3s",
+    ].join("\n"));
+    mock.emitPromptReady(id);
+    await handlePromise;
+
+    expect(slack.textOf("msg-1")).toContain("Block one");
+    expect(slack.posted.some((m) => m.text.includes("Block two"))).toBe(true);
+    // The tool invocation text never becomes a posted message body.
+    expect(slack.posted.every((m) => !m.text.includes("Bash(ls)"))).toBe(true);
+  });
+
+  it("grows a still-rendering prose block in place before it settles (claw-gxzq)", async () => {
+    const handlePromise = handler.handleMessage({ channelId: "C1", threadTs: "T1", text: "tell me", slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    // A prose block mid-render: no active spinner, no idle prompt yet. The
+    // discrete path holds it back (settledCount = len-1 = 0); the streaming path
+    // must GROW it into the placeholder (msg-1) via chat.update.
+    mock.setText(id, ["❯ tell me", "", "⏺ The answer is unfolding"].join("\n"));
+    await waitFor(() => (slack.textOf("msg-1") ?? "").includes("unfolding"));
+    expect(slack.posted).toHaveLength(1); // grew the placeholder, no new message
+
+    // The same block keeps growing in the SAME message.
+    mock.setText(id, ["❯ tell me", "", "⏺ The answer is unfolding nicely now."].join("\n"));
+    await waitFor(() => (slack.textOf("msg-1") ?? "").includes("nicely now"));
+    expect(slack.posted).toHaveLength(1);
+
+    // Idle finish resolves the block in place — still one message.
+    mock.setText(id, buildTurnGrid("tell me", "The answer is unfolding nicely now. Done."));
+    mock.emitPromptReady(id);
+    await handlePromise;
+    expect(slack.textOf("msg-1")).toContain("Done.");
+    expect(slack.posted).toHaveLength(1);
+  });
 });
 
 describe("idle session reaping (claw-9nvw)", () => {

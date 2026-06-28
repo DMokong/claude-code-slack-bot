@@ -327,11 +327,18 @@ export class WebtermRuntimeHandler {
     // prompt. No fixed cap — only a sliding inactivity guard for wedged sessions.
     // prompt-ready is an optimization (fast-path wake); the poll timer catches
     // turns where it never fires (claw-fcd9/etj7).
-    let postedSegments = 0;            // prose blocks already delivered
+    let postedSegments = 0;            // prose blocks already committed (finalized/posted)
     let idleObservations = 0;
     let lastGrid = "";
     let lastChangeAt = Date.now();
     let lastBaseline = session.promptReadyCount;
+    // Streaming cursor (claw-gxzq Task 3): the Slack ts of the prose block
+    // currently growing in-place, and its segment index. statusTs seeds the
+    // first block so it reuses the placeholder; growingIndex === -1 means the
+    // placeholder is unbound (available for the first delivered block).
+    let growingTs: string | undefined = statusTs;
+    let growingIndex = -1;
+    const streaming = this.streamEnabled(req);
 
     for (;;) {
       await this.waitForPromptReadyOrPoll(session, lastBaseline + 1, this.opts.turnPollMs);
@@ -370,9 +377,13 @@ export class WebtermRuntimeHandler {
         idleObservations = 0;
       }
 
-      // Post any NEW prose blocks that have settled. extractSegments filters
-      // tips/recap/spinner; tool blocks advance the status line only.
-      postedSegments = await this.relayNewSegments(session, req, grid, statusTs, deliver, postedSegments);
+      // Post/grow NEW prose blocks. extractSegments filters tips/recap/spinner;
+      // tool blocks advance the high-water mark only. Streaming grows the
+      // trailing still-rendering block in place (Task 3).
+      ({ postedSegments, growingTs, growingIndex } = await this.relayNewSegments(
+        session, req, grid, deliver, stopStatus,
+        { postedSegments, growingTs, growingIndex, streaming },
+      ));
 
       if (idle && idleObservations >= IDLE_STABLE_POLLS) {
         // stopStatus was called above at idleObservations === 1.
@@ -534,38 +545,133 @@ export class WebtermRuntimeHandler {
     return scrollback + "\n" + viewport;
   }
 
-  // Post prose blocks that appeared since `postedSegments`. Tool blocks don't
-  // post (the status line shows tool activity); they still count toward the
-  // high-water mark so a later prose block isn't mis-indexed. Returns the new
-  // high-water mark (count of segments observed). Discrete-post path: each
-  // settled prose block is its own message. The streaming path (Task 3)
-  // overrides delivery to grow-then-finalize.
+  // Relay prose blocks that appeared since `postedSegments`. Tool blocks never
+  // post (the status line shows tool activity); they still advance the
+  // high-water mark so a later prose block isn't mis-indexed.
+  //
+  // Discrete-post path (streamStatus off / no chat.update): each settled prose
+  // block is its own message (Task 2).
+  //
+  // Streaming path (Task 3, claw-gxzq): the first delivered prose block reuses
+  // the placeholder (resolved in place); subsequent settled blocks open a fresh
+  // message. A trailing block that is still rendering (not idle AND no active
+  // spinner, so it is held back from `settledCount`) GROWS in place via
+  // chat.update so the user sees partial text live; when it later settles it is
+  // finalized in the same message. The first relayed prose write also stops the
+  // status loop — once delivered prose owns the placeholder, a still-running
+  // status loop must not clobber it with a transient tool label.
   private async relayNewSegments(
     session: WebtermSession,
     req: HandleMessageOpts,
     grid: string,
-    statusTs: string | undefined,
     deliver: (text: string) => Promise<void>,
-    postedSegments: number,
-  ): Promise<number> {
+    stopStatus: () => Promise<void>,
+    state: { postedSegments: number; growingTs: string | undefined; growingIndex: number; streaming: boolean },
+  ): Promise<{ postedSegments: number; growingTs: string | undefined; growingIndex: number }> {
+    let { postedSegments, growingTs, growingIndex } = state;
     const segments = extractSegments(grid, req.text);
     // A present-continuous spinner ("✻ Working…") means claude has moved past
     // the rendered ⏺ blocks — they are all settled. Without a spinner and not
     // yet idle, the trailing block may still be mid-render: hold it back.
     const hasActiveSpinner = RELAY_ACTIVE_SPINNER_RE.test(grid);
-    const settledCount = (isGridIdle(grid) || hasActiveSpinner)
+    const idle = isGridIdle(grid);
+    const settledCount = (idle || hasActiveSpinner)
       ? segments.length
       : Math.max(0, segments.length - 1);
+
+    if (!state.streaming) {
+      // Discrete-post path (Task 2): one message per settled prose block.
+      for (let i = postedSegments; i < settledCount; i++) {
+        if (segments[i].kind === "prose") await this.postReply(req, segments[i].text);
+      }
+      return { postedSegments: Math.max(postedSegments, settledCount), growingTs, growingIndex };
+    }
+
+    // Is the held-back trailing block a still-rendering prose block to grow?
+    const trailingIdx = segments.length - 1;
+    const trailingIsGrowingProse =
+      !idle &&
+      settledCount <= trailingIdx &&
+      trailingIdx >= postedSegments &&
+      segments[trailingIdx]?.kind === "prose";
+
+    // Decide up front whether we'll write any prose this tick; if so, stop the
+    // status loop FIRST so it can't overwrite delivered prose in the shared
+    // placeholder (the status-loop ↔ growing-message race).
+    let willWriteProse = trailingIsGrowingProse;
+    for (let i = postedSegments; i < settledCount && !willWriteProse; i++) {
+      if (segments[i].kind === "prose") willWriteProse = true;
+    }
+    if (willWriteProse) await stopStatus();
+
+    // 1) Finalize fully-settled prose blocks at/after the high-water mark.
     for (let i = postedSegments; i < settledCount; i++) {
       const seg = segments[i];
-      if (seg.kind === "prose") {
-        // statusTs is reused only for the FIRST delivered block (resolves the
-        // "🐾 on it…" placeholder in place); subsequent blocks post fresh.
-        if (statusTs && i === 0) await deliver(seg.text);
-        else await this.postReply(req, seg.text);
+      if (seg.kind !== "prose") continue;
+      if (i === growingIndex && growingTs) {
+        // We were growing this block — finalize it in place with its final text.
+        await this.updateStreamMessage(req, growingTs, seg.text);
+        growingTs = undefined;
+        growingIndex = -1;
+      } else if (growingTs && growingIndex === -1) {
+        // First delivered block reuses the placeholder (resolve in place via
+        // deliver, which has the postMessage fallback if chat.update fails).
+        await deliver(seg.text);
+        growingTs = undefined; // placeholder now holds answer content
+      } else {
+        await this.postFreshStreamMessage(req, seg.text);
       }
     }
-    return Math.max(postedSegments, settledCount);
+    postedSegments = Math.max(postedSegments, settledCount);
+
+    // 2) Grow the trailing still-rendering prose block, if any.
+    if (trailingIsGrowingProse) {
+      const text = segments[trailingIdx].text;
+      if (growingIndex === trailingIdx && growingTs) {
+        await this.updateStreamMessage(req, growingTs, text);
+      } else if (growingTs && growingIndex === -1) {
+        // Bind the placeholder to this growing block.
+        growingIndex = trailingIdx;
+        await this.updateStreamMessage(req, growingTs, text);
+      } else {
+        // Open a fresh message for this growing block.
+        growingTs = await this.postFreshStreamMessage(req, text);
+        growingIndex = trailingIdx;
+      }
+    }
+
+    return { postedSegments, growingTs, growingIndex };
+  }
+
+  // Post a brand-new streamed message and return its ts (best-effort; returns
+  // undefined if the post failed or the client can't return a ts).
+  private async postFreshStreamMessage(req: HandleMessageOpts, text: string): Promise<string | undefined> {
+    try {
+      const res = (await req.slack.chat.postMessage({
+        channel: req.channelId,
+        thread_ts: req.threadTs,
+        text,
+        mrkdwn: true,
+      })) as { ts?: string };
+      return typeof res?.ts === "string" ? res.ts : undefined;
+    } catch (err) {
+      this.logger.error("stream message post failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return undefined;
+    }
+  }
+
+  // Grow an existing streamed message in place (best-effort chat.update; rides
+  // the relay loop's turnPollMs cadence, already under Slack's edit rate limit).
+  private async updateStreamMessage(req: HandleMessageOpts, ts: string, text: string): Promise<void> {
+    try {
+      await req.slack.chat.update({ channel: req.channelId, ts, text });
+    } catch (err) {
+      this.logger.warn("stream message update failed (best-effort)", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // Wait for the boot prompt-ready, but verify the grid is actually the
