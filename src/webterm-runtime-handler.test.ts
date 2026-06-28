@@ -1119,6 +1119,10 @@ describe("live-activity streaming (claw-1ta5)", () => {
     await handlePromise;
 
     expect(slack.textOf("msg-1")).toContain("Block one");
+    // Block one's message must hold its FINAL text, not the spinner-time partial
+    // (Fix 1 claw-gxzq): both frames carried "✻ Working…", so the pre-fix
+    // settledCount finalized block one at "Block one, partial…" and froze it.
+    expect(slack.textOf("msg-1")).toContain("now complete");
     expect(slack.posted.some((m) => m.text.includes("Block two"))).toBe(true);
     // The tool invocation text never becomes a posted message body.
     expect(slack.posted.every((m) => !m.text.includes("Bash(ls)"))).toBe(true);

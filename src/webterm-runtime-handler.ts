@@ -43,7 +43,6 @@ const RENDER_SETTLE_DEADLINE_MS = 120_000;
 const DEFAULT_IDLE_REAP_MS = 30 * 60_000;
 const DEFAULT_REAP_INTERVAL_MS = 5 * 60_000;
 const BOOT_TIMEOUT_MS = 60_000;
-const TURN_TIMEOUT_MS = 180_000;
 // The relay loop has no fixed turn cap (long agentic tasks stream for minutes).
 // Instead it aborts only when the session looks WEDGED: the grid stopped
 // changing, no active spinner, and claude is not idle at the prompt, for this
@@ -580,18 +579,32 @@ export class WebtermRuntimeHandler {
       : Math.max(0, segments.length - 1);
 
     if (!state.streaming) {
-      // Discrete-post path (Task 2): one message per settled prose block.
+      // Discrete-post path (Task 2): one message per settled prose block. This
+      // path can't update an already-posted message, so a trailing block that
+      // keeps growing after a spinner appears ships at its spinner-time text —
+      // partial-text risk is accepted for this no-chat.update fallback.
       for (let i = postedSegments; i < settledCount; i++) {
         if (segments[i].kind === "prose") await this.postReply(req, segments[i].text);
       }
       return { postedSegments: Math.max(postedSegments, settledCount), growingTs, growingIndex };
     }
 
+    // Streaming path (Task 3, Fix 1 claw-gxzq): use an IDLE-ONLY finalize bound.
+    // The discrete `settledCount` finalizes the trailing block whenever a
+    // spinner is up — but a spinner can coexist with a still-growing ⏺ block, so
+    // that bound could finalize a block at partial text and freeze it (the
+    // finalize loop would then start past its index on later polls). Because the
+    // streaming path CAN rewrite a message via chat.update, hold the trailing
+    // block back whenever non-idle and grow it in place instead, regardless of
+    // spinner. Earlier blocks [0 .. length-2] still finalize under a spinner.
+    const streamSettled = idle ? segments.length : Math.max(0, segments.length - 1);
+
     // Is the held-back trailing block a still-rendering prose block to grow?
+    // With the idle-only bound above, the trailing block is held back whenever
+    // non-idle, so no spinner-dependent gate is needed here.
     const trailingIdx = segments.length - 1;
     const trailingIsGrowingProse =
       !idle &&
-      settledCount <= trailingIdx &&
       trailingIdx >= postedSegments &&
       segments[trailingIdx]?.kind === "prose";
 
@@ -599,18 +612,21 @@ export class WebtermRuntimeHandler {
     // status loop FIRST so it can't overwrite delivered prose in the shared
     // placeholder (the status-loop ↔ growing-message race).
     let willWriteProse = trailingIsGrowingProse;
-    for (let i = postedSegments; i < settledCount && !willWriteProse; i++) {
+    for (let i = postedSegments; i < streamSettled && !willWriteProse; i++) {
       if (segments[i].kind === "prose") willWriteProse = true;
     }
     if (willWriteProse) await stopStatus();
 
     // 1) Finalize fully-settled prose blocks at/after the high-water mark.
-    for (let i = postedSegments; i < settledCount; i++) {
+    for (let i = postedSegments; i < streamSettled; i++) {
       const seg = segments[i];
       if (seg.kind !== "prose") continue;
       if (i === growingIndex && growingTs) {
         // We were growing this block — finalize it in place with its final text.
-        await this.updateStreamMessage(req, growingTs, seg.text);
+        const ok = await this.updateStreamMessage(req, growingTs, seg.text);
+        // Fix 4: if the final chat.update fails, don't silently lose the final
+        // delta — post it fresh, mirroring deliverReply's fallback.
+        if (!ok) await this.postReply(req, seg.text);
         growingTs = undefined;
         growingIndex = -1;
       } else if (growingTs && growingIndex === -1) {
@@ -622,19 +638,25 @@ export class WebtermRuntimeHandler {
         await this.postFreshStreamMessage(req, seg.text);
       }
     }
-    postedSegments = Math.max(postedSegments, settledCount);
+    postedSegments = Math.max(postedSegments, streamSettled);
 
     // 2) Grow the trailing still-rendering prose block, if any.
     if (trailingIsGrowingProse) {
       const text = segments[trailingIdx].text;
-      if (growingIndex === trailingIdx && growingTs) {
-        await this.updateStreamMessage(req, growingTs, text);
+      if (growingIndex === trailingIdx) {
+        // Already tracking this block. Update it if we have a ts; if the fresh
+        // post below previously failed (no ts, e.g. a Slack outage) do NOT spam
+        // a new message every tick — leave it to finalize via the finalize loop
+        // once it settles (Fix 3).
+        if (growingTs) await this.updateStreamMessage(req, growingTs, text);
       } else if (growingTs && growingIndex === -1) {
         // Bind the placeholder to this growing block.
         growingIndex = trailingIdx;
         await this.updateStreamMessage(req, growingTs, text);
       } else {
-        // Open a fresh message for this growing block.
+        // Open a fresh message for this growing block. Bind growingIndex even if
+        // the post returned no ts, so the branch above suppresses re-posting on
+        // subsequent ticks (Fix 3).
         growingTs = await this.postFreshStreamMessage(req, text);
         growingIndex = trailingIdx;
       }
@@ -664,13 +686,17 @@ export class WebtermRuntimeHandler {
 
   // Grow an existing streamed message in place (best-effort chat.update; rides
   // the relay loop's turnPollMs cadence, already under Slack's edit rate limit).
-  private async updateStreamMessage(req: HandleMessageOpts, ts: string, text: string): Promise<void> {
+  // Returns false if the update threw, so a finalize caller can fall back to a
+  // fresh post rather than silently lose the final delta (Fix 4).
+  private async updateStreamMessage(req: HandleMessageOpts, ts: string, text: string): Promise<boolean> {
     try {
       await req.slack.chat.update({ channel: req.channelId, ts, text });
+      return true;
     } catch (err) {
       this.logger.warn("stream message update failed (best-effort)", {
         error: err instanceof Error ? err.message : String(err),
       });
+      return false;
     }
   }
 

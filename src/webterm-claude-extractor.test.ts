@@ -238,6 +238,35 @@ describe("extractTurn — bottom-prompt boundary + model-row chrome (Sonnet-era 
     expect(turn!.assistant).not.toContain("Tip:");
   });
 
+  it("drops a ※ tip rendered BEFORE the first ⏺ block as chrome (claw-gxzq)", () => {
+    // Regression guard for the final-review finding: isAnswerEnd is no longer
+    // gated by having seen a ⏺ marker, so a ※ tip that renders BEFORE the first
+    // answer block enters chrome mode (skipped) rather than leaking into
+    // toolNotes (the pre-fix mode==="none" path would have pushed it). The real
+    // ⏺ answer that follows the tip is still captured.
+    const grid = [
+      "[webterm:test] user@host claudeclaw %",
+      "",
+      "❯ do the thing",
+      "",
+      "※ Tip: Send a message while Claude works to steer it.",
+      "",
+      "⏺ The real answer arrives after the tip.",
+      "",
+      "✻ Cooked for 2s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Opus 4.8 (1M context) │ ⏱ 5s",
+    ].join("\n");
+    const turn = extractTurn(grid, "do the thing");
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).toContain("real answer arrives after the tip");
+    expect(turn!.assistant).not.toContain("Tip:");
+    expect(turn!.toolNotes).toEqual([]);
+  });
+
   it("handles a ghost suggestion that wraps onto multiple box lines", () => {
     const g = [
       "❯ summarize the repo",
