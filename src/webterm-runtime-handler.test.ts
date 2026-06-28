@@ -214,6 +214,7 @@ describe("WebtermRuntimeHandler", () => {
       cwd: "/tmp/test",
       pasteSettleMs: 5,
       extractStableMs: 10,
+      turnPollMs: 20,
     });
   });
 
@@ -976,6 +977,7 @@ describe("live-activity streaming (claw-1ta5)", () => {
       cwd: "/tmp/test",
       pasteSettleMs: 5,
       extractStableMs: 10,
+      turnPollMs: 20,
       streamStatus: true,
       statusPollMs: 10,
     });
@@ -1093,6 +1095,7 @@ describe("idle session reaping (claw-9nvw)", () => {
       cwd: "/tmp/test",
       pasteSettleMs: 5,
       extractStableMs: 10,
+      turnPollMs: 20,
       idleReapMs: 60_000,
       reapIntervalMs: 0, // timer off — tests drive reapIdleSessions() directly
     });
