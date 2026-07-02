@@ -73,7 +73,10 @@ function isPromptLine(t: string, bareMarker: string): boolean {
 }
 
 const SPINNER_FOR_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+s$/;
-const SPINNER_VERB_END_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+…$/;
+// claw-gxzq: no EOL anchor — the live spinner usually carries a suffix after
+// the ellipsis ("✳ Nesting… (5s · ↓ 205 tokens)"); an anchored match only saw
+// the bare "✻ Pouncing…" form and let the suffixed form leak into prose.
+const SPINNER_VERB_END_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+…/;
 // True if `t` (trimmed) is the first line of the post-answer footer: the
 // spinner ("✻ Cooked for 3s" / "✶ Pouncing…") or claude's "※ recap" block.
 // Used to end the answer region the moment the footer begins.

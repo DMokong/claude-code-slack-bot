@@ -48,13 +48,14 @@ const BOOT_TIMEOUT_MS = 60_000;
 // changing, no active spinner, and claude is not idle at the prompt, for this
 // long. A live tool run keeps a spinner up, so it never trips this (claw-gxzq).
 const DEFAULT_SLIDING_INACTIVITY_MS = 5 * 60_000;
-// Consecutive idle observations required before declaring the turn finished —
-// guards against a transient idle-looking frame mid-render.
+// Consecutive idle observations required before declaring the turn finished
+// AND before finalizing the trailing prose block. The count resets whenever
+// the grid changes, so "stable idle" means idle across this many polls with a
+// frozen grid. Both guards exist because claude REMOVES the spinner line while
+// it streams prose into the transcript (claw-gxzq, 200ms frame captures in
+// test/fixtures/webterm-grids/08-*): a single idle-looking frame is routinely
+// a mid-render pause with the trailing block at partial text.
 const IDLE_STABLE_POLLS = 2;
-// Present-continuous spinner (e.g. "✻ Working…", "✶ Pouncing…") signals that
-// claude has moved past the current ⏺ blocks — they are all settled. Distinct
-// from the past-tense elapsed line ("✻ Cooked for 3s") which is post-turn.
-const RELAY_ACTIVE_SPINNER_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+…\s*$/m;
 // How often to re-extract the grid while waiting for the answer (claw-fcd9/etj7
 // fix A). The turn loop polls on this interval AND wakes early on a prompt-ready
 // fire — so a MISSING post-completion prompt-ready (the etj7 non-deterministic
@@ -360,31 +361,37 @@ export class WebtermRuntimeHandler {
         return;
       }
 
-      if (grid !== lastGrid) { lastGrid = grid; lastChangeAt = Date.now(); }
+      const gridChanged = grid !== lastGrid;
+      if (gridChanged) { lastGrid = grid; lastChangeAt = Date.now(); }
 
       // Cache the idle check so we call isGridIdle once per iteration.
       const idle = isGridIdle(grid);
 
-      // Turn-end: idle prompt, stable across IDLE_STABLE_POLLS observations.
+      // Turn-end: idle prompt, stable across IDLE_STABLE_POLLS observations
+      // with NO grid change in between — a changed grid restarts the count at
+      // 1, because an idle-looking frame whose content is still moving is a
+      // mid-render pause, not the prompt (claw-gxzq trailing-body drop).
       // Stop the status loop on the FIRST idle observation — BEFORE
       // relayNewSegments delivers any block — so a still-running status loop
       // can't overwrite the delivered answer during the second-observation wait.
       if (idle) {
-        idleObservations++;
+        idleObservations = gridChanged ? 1 : idleObservations + 1;
         if (idleObservations === 1) await stopStatus();
       } else {
         idleObservations = 0;
       }
+      const stableIdle = idle && idleObservations >= IDLE_STABLE_POLLS;
 
       // Post/grow NEW prose blocks. extractSegments filters tips/recap/spinner;
       // tool blocks advance the high-water mark only. Streaming grows the
-      // trailing still-rendering block in place (Task 3).
+      // trailing still-rendering block in place (Task 3); the trailing block
+      // only FINALIZES on stable idle, on the same tick the turn ends.
       ({ postedSegments, growingTs, growingIndex } = await this.relayNewSegments(
         session, req, grid, deliver, stopStatus,
-        { postedSegments, growingTs, growingIndex, streaming },
+        { postedSegments, growingTs, growingIndex, streaming, stableIdle },
       ));
 
-      if (idle && idleObservations >= IDLE_STABLE_POLLS) {
+      if (stableIdle) {
         // stopStatus was called above at idleObservations === 1.
         if (postedSegments === 0) {
           // Idle but nothing extracted — fall back to the whole-turn extractor
@@ -548,63 +555,50 @@ export class WebtermRuntimeHandler {
   // post (the status line shows tool activity); they still advance the
   // high-water mark so a later prose block isn't mis-indexed.
   //
-  // Discrete-post path (streamStatus off / no chat.update): each settled prose
-  // block is its own message (Task 2).
+  // Settle rule (claw-gxzq, rewritten after the trailing-body drop): a block is
+  // settled when a LATER segment exists below it (claude renders sequentially),
+  // or on STABLE idle — idle observed across IDLE_STABLE_POLLS polls with a
+  // frozen grid, the same condition that ends the turn. Nothing weaker settles
+  // the trailing block: captured frames (test/fixtures/webterm-grids/08-*/09-*)
+  // show claude removes the spinner line while streaming prose, so "idle" on a
+  // single frame — and the old "a spinner is up ⇒ prior blocks settled"
+  // heuristic — both routinely finalize a block at partial text, and the
+  // high-water mark makes that unrepairable.
   //
-  // Streaming path (Task 3, claw-gxzq): the first delivered prose block reuses
-  // the placeholder (resolved in place); subsequent settled blocks open a fresh
-  // message. A trailing block that is still rendering (not idle AND no active
-  // spinner, so it is held back from `settledCount`) GROWS in place via
-  // chat.update so the user sees partial text live; when it later settles it is
-  // finalized in the same message. The first relayed prose write also stops the
-  // status loop — once delivered prose owns the placeholder, a still-running
-  // status loop must not clobber it with a transient tool label.
+  // Discrete-post path (streamStatus off / no chat.update): each settled prose
+  // block is its own message (Task 2) — the trailing block posts once, complete,
+  // when the turn ends.
+  //
+  // Streaming path (Task 3): the first delivered prose block reuses the
+  // placeholder (resolved in place); subsequent settled blocks open a fresh
+  // message. The still-rendering trailing block GROWS in place via chat.update
+  // so the user sees partial text live; it finalizes in the same message on
+  // stable idle. The first relayed prose write also stops the status loop —
+  // once delivered prose owns the placeholder, a still-running status loop
+  // must not clobber it with a transient tool label.
   private async relayNewSegments(
     session: WebtermSession,
     req: HandleMessageOpts,
     grid: string,
     deliver: (text: string) => Promise<void>,
     stopStatus: () => Promise<void>,
-    state: { postedSegments: number; growingTs: string | undefined; growingIndex: number; streaming: boolean },
+    state: { postedSegments: number; growingTs: string | undefined; growingIndex: number; streaming: boolean; stableIdle: boolean },
   ): Promise<{ postedSegments: number; growingTs: string | undefined; growingIndex: number }> {
     let { postedSegments, growingTs, growingIndex } = state;
     const segments = extractSegments(grid, req.text);
-    // A present-continuous spinner ("✻ Working…") means claude has moved past
-    // the rendered ⏺ blocks — they are all settled. Without a spinner and not
-    // yet idle, the trailing block may still be mid-render: hold it back.
-    const hasActiveSpinner = RELAY_ACTIVE_SPINNER_RE.test(grid);
-    const idle = isGridIdle(grid);
-    const settledCount = (idle || hasActiveSpinner)
-      ? segments.length
-      : Math.max(0, segments.length - 1);
+    const settled = state.stableIdle ? segments.length : Math.max(0, segments.length - 1);
 
     if (!state.streaming) {
-      // Discrete-post path (Task 2): one message per settled prose block. This
-      // path can't update an already-posted message, so a trailing block that
-      // keeps growing after a spinner appears ships at its spinner-time text —
-      // partial-text risk is accepted for this no-chat.update fallback.
-      for (let i = postedSegments; i < settledCount; i++) {
+      for (let i = postedSegments; i < settled; i++) {
         if (segments[i].kind === "prose") await this.postReply(req, segments[i].text);
       }
-      return { postedSegments: Math.max(postedSegments, settledCount), growingTs, growingIndex };
+      return { postedSegments: Math.max(postedSegments, settled), growingTs, growingIndex };
     }
 
-    // Streaming path (Task 3, Fix 1 claw-gxzq): use an IDLE-ONLY finalize bound.
-    // The discrete `settledCount` finalizes the trailing block whenever a
-    // spinner is up — but a spinner can coexist with a still-growing ⏺ block, so
-    // that bound could finalize a block at partial text and freeze it (the
-    // finalize loop would then start past its index on later polls). Because the
-    // streaming path CAN rewrite a message via chat.update, hold the trailing
-    // block back whenever non-idle and grow it in place instead, regardless of
-    // spinner. Earlier blocks [0 .. length-2] still finalize under a spinner.
-    const streamSettled = idle ? segments.length : Math.max(0, segments.length - 1);
-
     // Is the held-back trailing block a still-rendering prose block to grow?
-    // With the idle-only bound above, the trailing block is held back whenever
-    // non-idle, so no spinner-dependent gate is needed here.
     const trailingIdx = segments.length - 1;
     const trailingIsGrowingProse =
-      !idle &&
+      !state.stableIdle &&
       trailingIdx >= postedSegments &&
       segments[trailingIdx]?.kind === "prose";
 
@@ -612,13 +606,13 @@ export class WebtermRuntimeHandler {
     // status loop FIRST so it can't overwrite delivered prose in the shared
     // placeholder (the status-loop ↔ growing-message race).
     let willWriteProse = trailingIsGrowingProse;
-    for (let i = postedSegments; i < streamSettled && !willWriteProse; i++) {
+    for (let i = postedSegments; i < settled && !willWriteProse; i++) {
       if (segments[i].kind === "prose") willWriteProse = true;
     }
     if (willWriteProse) await stopStatus();
 
     // 1) Finalize fully-settled prose blocks at/after the high-water mark.
-    for (let i = postedSegments; i < streamSettled; i++) {
+    for (let i = postedSegments; i < settled; i++) {
       const seg = segments[i];
       if (seg.kind !== "prose") continue;
       if (i === growingIndex && growingTs) {
@@ -638,7 +632,7 @@ export class WebtermRuntimeHandler {
         await this.postFreshStreamMessage(req, seg.text);
       }
     }
-    postedSegments = Math.max(postedSegments, streamSettled);
+    postedSegments = Math.max(postedSegments, settled);
 
     // 2) Grow the trailing still-rendering prose block, if any.
     if (trailingIsGrowingProse) {

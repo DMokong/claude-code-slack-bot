@@ -660,3 +660,76 @@ describe("isGridIdle", () => {
     expect(isGridIdle(grid)).toBe(true);
   });
 });
+
+// claw-gxzq trailing-body drop (2026-07-03). Frames captured at 200ms from a
+// live 3-step turn show claude REMOVES the spinner line while it streams prose
+// into the transcript — so a mid-render grid satisfies isGridIdle (prompt box
+// is always drawn, no spinner present) while the trailing ⏺ block is only its
+// header. These fixtures pin that reality: the extractor CANNOT distinguish a
+// transient render pause from real idle on a single frame, so the relay must
+// gate finalization on idle STABILITY, not one idle observation.
+describe("idle-flap fixtures — mid-render grids that look idle (claw-gxzq)", () => {
+  it("08-2: header-only mid-render frame reads idle with a header-only trailing segment", () => {
+    const f = loadFixture("08-stream-flap-2-poison-header");
+    expect(isGridIdle(f.grid)).toBe(true);
+    const segs = extractSegments(f.grid, f.userInput);
+    expect(segs.length).toBe(1);
+    expect(segs[0].kind).toBe("prose");
+    expect(segs[0].text).toContain("Step 1 — Octopus fun fact:");
+    expect(segs[0].text).not.toContain("hearts");
+  });
+
+  it("08-3: 500ms later the same block has grown a body on an equally idle-looking frame", () => {
+    const f = loadFixture("08-stream-flap-3-body");
+    expect(isGridIdle(f.grid)).toBe(true);
+    const segs = extractSegments(f.grid, f.userInput);
+    expect(segs[segs.length - 1].text).toContain("hearts");
+  });
+
+  it("09: the turn-end pair shows the haiku body arriving AFTER an idle-looking header frame", () => {
+    const header = loadFixture("09-turnend-flap-1-header");
+    const body = loadFixture("09-turnend-flap-2-body");
+    expect(isGridIdle(header.grid)).toBe(true);
+    expect(isGridIdle(body.grid)).toBe(true);
+    const headerSegs = extractSegments(header.grid, header.userInput);
+    const bodySegs = extractSegments(body.grid, body.userInput);
+    expect(headerSegs[headerSegs.length - 1].text).toContain("Terminal haiku:");
+    expect(headerSegs[headerSegs.length - 1].text).not.toContain("Cursor blinks");
+    expect(bodySegs[bodySegs.length - 1].text).toContain("Cursor blinks");
+  });
+});
+
+describe("suffixed live spinner is chrome, not prose (claw-gxzq)", () => {
+  // Same EOL-anchor bug family as isGridIdle's ACTIVE_SPINNER_RE: the chrome
+  // filter only recognized a BARE "✻ Verb…" spinner, so the real suffixed form
+  // ("✳ Nesting… (5s · ↓ 205 tokens)") leaked into extracted prose segments.
+  it("10: excludes a '✳ Nesting… (5s · ↓ 205 tokens)' line from prose segments", () => {
+    const f = loadFixture("10-spinner-suffix-leak");
+    const segs = extractSegments(f.grid, f.userInput);
+    expect(segs.length).toBeGreaterThan(0);
+    for (const s of segs) {
+      expect(s.text).not.toContain("Nesting…");
+    }
+  });
+
+  it("filters a suffixed spinner between prose blocks in a synthetic grid", () => {
+    const grid = [
+      "[webterm:test] user@host claudeclaw %",
+      "",
+      "❯ build it",
+      "",
+      "⏺ First, here's the plan.",
+      "",
+      "✳ Nesting… (5s · ↓ 205 tokens)",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Sonnet 4.6 │ ⏱ 5s",
+    ].join("\n");
+    const segs = extractSegments(grid, "build it");
+    expect(segs.map((s) => s.kind)).toEqual(["prose"]);
+    expect(segs[0].text).toContain("here's the plan");
+    expect(segs.some((s) => s.text.includes("Nesting"))).toBe(false);
+  });
+});

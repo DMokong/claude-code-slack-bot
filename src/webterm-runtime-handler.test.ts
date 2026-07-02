@@ -868,6 +868,9 @@ describe("WebtermRuntimeHandler", () => {
     await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
 
     // Block one renders (still working: active spinner, no idle prompt yet).
+    // The trailing block is NOT settled by the spinner (claw-gxzq: a spinner
+    // coexists with a still-growing block) — nothing posts yet; block one
+    // settles when a later segment appears below it.
     mock.setText(id, [
       "❯ two parts",
       "",
@@ -879,7 +882,6 @@ describe("WebtermRuntimeHandler", () => {
       "────────────────────────────────────────",
       "   Opus 4.8 │ ⏱ 1s",
     ].join("\n"));
-    await waitFor(() => slack.posted.some((m) => m.text.includes("first block")));
 
     // A tip appears, then a second block — and claude goes idle.
     mock.setText(id, [
@@ -898,6 +900,9 @@ describe("WebtermRuntimeHandler", () => {
       "   Opus 4.8 │ ⏱ 2s",
     ].join("\n"));
     mock.emitPromptReady(id);
+    // Block one posts as soon as the frame shows content below it — before the
+    // turn ends (progressive relay preserved).
+    await waitFor(() => slack.posted.some((m) => m.text.includes("first block")));
     await p;
 
     expect(slack.posted.some((m) => m.text.includes("first block"))).toBe(true);
@@ -925,15 +930,19 @@ describe("WebtermRuntimeHandler", () => {
       "────────────────────────────────────────", "   Opus 4.8 │ ⏱ 9s",
     ].join("\n");
 
+    // The trailing block never settles under a spinner (claw-gxzq) — each step
+    // posts when the NEXT step's block appears below it, one block behind the
+    // render edge.
     mock.setText(id, working(["Step 1 complete."]));
-    await waitFor(() => slack.posted.some((m) => m.text.includes("Step 1 complete")));
     mock.setText(id, working(["Step 1 complete.", "Step 2 complete."]));
+    await waitFor(() => slack.posted.some((m) => m.text.includes("Step 1 complete")));
+    mock.setText(id, working(["Step 1 complete.", "Step 2 complete.", "Step 3 complete."]));
     await waitFor(() => slack.posted.some((m) => m.text.includes("Step 2 complete")));
 
     // Finish: spinner gone, idle prompt.
     mock.setText(id, [
       "❯ do a long job", "",
-      "⏺ Step 1 complete.", "", "⏺ Step 2 complete.", "", "⏺ All steps done.", "",
+      "⏺ Step 1 complete.", "", "⏺ Step 2 complete.", "", "⏺ Step 3 complete.", "", "⏺ All steps done.", "",
       "✻ Cooked for 30s",
       "────────────────────────────────────────", "❯",
       "────────────────────────────────────────", "   Opus 4.8 │ ⏱ 30s",
@@ -1153,6 +1162,161 @@ describe("live-activity streaming (claw-1ta5)", () => {
     await handlePromise;
     expect(slack.textOf("msg-1")).toContain("Done.");
     expect(slack.posted).toHaveLength(1);
+  });
+});
+
+// claw-gxzq trailing-body drop (2026-07-03): 200ms frame captures of a live
+// turn show claude REMOVES the spinner line while streaming prose into the
+// transcript, so a mid-render grid satisfies isGridIdle while the trailing ⏺
+// block is only its header ("Step 1 — Octopus fun fact:" with the fact still
+// rendering). Finalizing on a SINGLE idle observation ships that partial text
+// and the postedSegments high-water mark never repairs it. The relay must gate
+// trailing-block finalization on STABLE idle: idle across IDLE_STABLE_POLLS
+// consecutive observations with NO grid change in between.
+//
+// These tests drive the turn loop deterministically: turnPollMs is huge, so
+// the loop iterates exactly once per emitPromptReady; the mock's `calls` log
+// tells us when an iteration's grid fetch has happened. Swapping setText after
+// that is race-free — the iteration already holds the grid it fetched.
+describe("trailing-block settle gating (claw-gxzq idle-flap)", () => {
+  let mock: ReturnType<typeof makeMockWebterm>;
+  let slack: ReturnType<typeof makeSlack>;
+
+  beforeEach(() => {
+    mock = makeMockWebterm();
+    slack = makeSlack();
+  });
+
+  const textFetches = () => mock.calls.filter((c) => c.method === "GET" && /\/text$/.test(c.url)).length;
+
+  async function bootTo(handler: WebtermRuntimeHandler, req: any): Promise<{ id: string; p: Promise<void> }> {
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    return { id, p };
+  }
+
+  // One loop iteration: wake via prompt-ready, wait until its grid fetch lands.
+  async function iterate(id: string): Promise<void> {
+    const n = textFetches();
+    mock.emitPromptReady(id);
+    await waitFor(() => textFetches() > n);
+  }
+
+  const idleLooking = (blockLines: string[], clock: string) => [
+    "❯ tell me",
+    "",
+    ...blockLines,
+    "",
+    "────────────────────────────────────────",
+    "❯",
+    "────────────────────────────────────────",
+    `   Sonnet 4.6 │ ⏱ ${clock}`,
+  ].join("\n");
+
+  // In the streaming tests the loop's reaction to each frame is observed via
+  // Slack writes (grow/deliver touches a message on every relevant frame in
+  // both the buggy and fixed worlds), because the status loop's grid fetches
+  // would make a fetch-count observable ambiguous. The body frame is raced
+  // against turn-end: the buggy relay goes silent there and just ends the turn.
+  const anyMessageContains = (s: ReturnType<typeof makeSlack>, needle: string) =>
+    [...s.messages.values()].some((m) => m.text.includes(needle));
+
+  it("streaming: a transient idle-looking frame must not finalize the trailing block", async () => {
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 60_000,
+      streamStatus: true, statusPollMs: 10,
+    });
+    const req = { channelId: "C1", threadTs: "T1", text: "tell me", slack: slack.client };
+    const { id, p } = await bootTo(handler, req);
+
+    // Poison frame: header rendered, no spinner anywhere, prompt box present —
+    // exactly the captured 08-stream-flap-2 shape. Reads idle; body not there.
+    mock.setText(id, idleLooking(["⏺ Step 1 — Octopus fun fact:"], "1s"));
+    mock.emitPromptReady(id);
+    await waitFor(() => anyMessageContains(slack, "fun fact:"));
+
+    // 500ms later (next frame in the capture): the SAME block has its body on
+    // an equally idle-looking grid.
+    mock.setText(id, idleLooking(["⏺ Step 1 — Octopus fun fact:", "  Octopuses have three hearts."], "2s"));
+    mock.emitPromptReady(id);
+    await Promise.race([
+      p,
+      waitFor(() => anyMessageContains(slack, "three hearts")).catch(() => {}),
+    ]);
+
+    // Grid frozen → stable idle → finalize + turn end.
+    mock.emitPromptReady(id);
+    await p;
+
+    const all = [...slack.messages.values()].map((m) => m.text).join("\n---\n");
+    expect(all).toContain("three hearts");
+  });
+
+  it("discrete: the trailing block posts complete, never at its poison-frame text", async () => {
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 60_000,
+    });
+    slack = makeSlack({ withUpdate: false }); // no chat.update → discrete path
+    const req = { channelId: "C1", threadTs: "T1", text: "tell me", slack: slack.client };
+    const { id, p } = await bootTo(handler, req);
+
+    mock.setText(id, idleLooking(["⏺ Step 1 — Octopus fun fact:"], "1s"));
+    await iterate(id);
+
+    mock.setText(id, idleLooking(["⏺ Step 1 — Octopus fun fact:", "  Octopuses have three hearts."], "2s"));
+    await iterate(id);
+
+    mock.emitPromptReady(id);
+    await p;
+
+    expect(slack.posted.length).toBe(1);
+    expect(slack.posted[0].text).toContain("three hearts");
+  });
+
+  it("streaming: real captured turn-end frames — the haiku body survives (fixtures 09)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const load = (name: string) => {
+      const raw = readFileSync(join(__dirname, "..", "test", "fixtures", "webterm-grids", `${name}.txt`), "utf-8");
+      const u = "__USER_INPUT__\n"; const g = "\n__GRID__\n"; const s = "\n__SCROLLBACK__\n";
+      return {
+        userInput: raw.slice(raw.indexOf(u) + u.length, raw.indexOf(g)),
+        grid: raw.slice(raw.indexOf(g) + g.length, raw.indexOf(s)),
+      };
+    };
+    const header = load("09-turnend-flap-1-header");
+    const body = load("09-turnend-flap-2-body");
+
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 60_000,
+      streamStatus: true, statusPollMs: 10,
+    });
+    const req = { channelId: "C1", threadTs: "T1", text: header.userInput, slack: slack.client };
+    const { id, p } = await bootTo(handler, req);
+
+    mock.setText(id, header.grid); // idle-looking, "Step 3 — Terminal haiku:" header only
+    mock.emitPromptReady(id);
+    await waitFor(() => anyMessageContains(slack, "Terminal haiku:"));
+
+    mock.setText(id, body.grid);   // 550ms later: haiku rendered, grid truly idle
+    mock.emitPromptReady(id);
+    await Promise.race([
+      p,
+      waitFor(() => anyMessageContains(slack, "Cursor blinks")).catch(() => {}),
+    ]);
+
+    mock.emitPromptReady(id);      // unchanged → stable idle → finalize + end
+    await p;
+
+    const all = [...slack.messages.values()].map((m) => m.text).join("\n---\n");
+    expect(all).toContain("Cursor blinks and waits");
+    expect(all).toContain("the shell breathes them in.");
   });
 });
 
