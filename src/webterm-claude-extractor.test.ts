@@ -624,4 +624,39 @@ describe("isGridIdle", () => {
   it("is false when there is no input box (bare shell)", () => {
     expect(isGridIdle("[webterm:test] user@host claudeclaw %")).toBe(false);
   });
+
+  // claw-gxzq live-verification bug (2026-07-03): claude's REAL active spinner
+  // renders the verb+ellipsis followed by a live "(Ns · N tokens · thought…)"
+  // suffix. The end-anchored spinner regex only matched a BARE "Verb…", so a
+  // mid-generation grid read as idle → the relay finalized the Slack message at
+  // ~7s with only the streaming placeholder while claude was still working. The
+  // ❯ input box is always drawn during generation, so the prompt alone is not a
+  // turn-end signal.
+  it("is false during generation when the spinner carries a token-count suffix", () => {
+    const grid = [
+      "❯ tell me a fun fact",
+      "",
+      "✻ Whirring… (7s · ↓ 154 tokens · thought for 1s)",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Sonnet 4.6 │ ⏱ 7s",
+    ].join("\n");
+    expect(isGridIdle(grid)).toBe(false);
+  });
+
+  it("is true at a completed 'Churned for Ns' status line (past-tense, no ellipsis)", () => {
+    const grid = [
+      "⏺ 4",
+      "",
+      "✻ Churned for 16s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Sonnet 4.6 │ ⏱ 22s",
+    ].join("\n");
+    expect(isGridIdle(grid)).toBe(true);
+  });
 });

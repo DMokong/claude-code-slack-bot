@@ -389,8 +389,16 @@ export function extractSegments(
 
 // An active spinner is present-continuous ("✻ Tinkering…") — claude is working.
 // The past-tense elapsed line ("✻ Cooked for 3s") is a post-turn artifact and
-// does NOT count as active.
-const ACTIVE_SPINNER_RE = new RegExp(`^\\s*[${SPINNER_GLYPHS}]\\s+\\S+…\\s*$`);
+// does NOT count as active. The discriminator is the ellipsis: an active
+// spinner ALWAYS carries "Verb…", a completed line reads "Verbed for Ns".
+//
+// claw-gxzq (2026-07-03): must NOT anchor the ellipsis to end-of-line — claude's
+// real spinner renders a live suffix after it, e.g.
+//   "✻ Whirring… (7s · ↓ 154 tokens · thought for 1s)"
+// The old `…\s*$` anchor missed that, so mid-generation grids read as idle and
+// the continuous relay finalized the Slack message at ~7s while claude was still
+// producing output. Match "glyph + word + …" anywhere on the line instead.
+const ACTIVE_SPINNER_RE = new RegExp(`^\\s*[${SPINNER_GLYPHS}]\\s+\\S+…`);
 
 // True when the grid shows claude idle at its input prompt: the bottom input
 // box is present AND no active spinner is rendered. Used by the relay loop to
