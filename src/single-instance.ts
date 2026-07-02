@@ -26,8 +26,22 @@ function getLockPath(): string {
  *
  * False-positives (other unrelated `dist/index.js` projects) are filtered
  * out by DEFAULT_CWD_FILTER below.
+ *
+ * The three alternatives cover every real shape of the ALWAYS-ON bot:
+ *   - `dist/index.js`                (prod: node dist/index.js, npm)
+ *   - `src/index.ts`                 (tsx-loaded: `node --import tsx/dist/loader.mjs src/index.ts`
+ *                                     — the entry arg is what we match, not the loader)
+ *   - `tsx watch src/index.ts`       (npm run dev parent)
+ *
+ * claw-a9zo (2026-07-03): must NOT match on the bare `tsx/dist/loader.mjs`
+ * loader path — that flags EVERY tsx-loaded script in the bot's cwd, including
+ * the one-shot `scripts/run-via-webterm.ts` job runner (spawned by the
+ * ai-digest launchd job). That false positive refused a legitimate bot restart
+ * while a digest was mid-run. The bot's own entry file (src/index.ts) is
+ * present in the tsx command line and is matched directly, so gating on the
+ * loader adds nothing but noise.
  */
-const DEFAULT_PATTERN = /(?:^|[ /])(?:dist\/index\.js|src\/index\.ts)(?:\s|$)|tsx watch src\/index\.ts|tsx\/dist\/loader\.mjs/;
+export const DEFAULT_PATTERN = /(?:^|[ /])(?:dist\/index\.js|src\/index\.ts)(?:\s|$)|tsx watch src\/index\.ts/;
 
 /**
  * Default cwd filter. A candidate process must have `claude-code-slack-bot`

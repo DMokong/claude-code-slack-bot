@@ -3,7 +3,29 @@ import { spawn, ChildProcess, execSync } from 'child_process';
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { findOtherInstances, ensureSingleInstance } from './single-instance';
+import { findOtherInstances, ensureSingleInstance, DEFAULT_PATTERN } from './single-instance';
+
+describe('DEFAULT_PATTERN — matches the bot, not sibling tsx scripts', () => {
+	const bot = [
+		'node dist/index.js',
+		'node /Users/x/projects/claude-code-slack-bot/dist/index.js',
+		'node --require .../tsx/dist/preflight.cjs --import file:///.../tsx/dist/loader.mjs src/index.ts',
+		'node .../node_modules/.bin/tsx watch src/index.ts',
+	];
+	const notBot = [
+		// claw-a9zo: the ai-digest job runner is tsx-loaded in the bot's cwd but
+		// is NOT the always-on bot — it must not trip the single-instance guard.
+		'npm exec tsx scripts/run-via-webterm.ts --job ai-digest --prompt-file /x/ai-digest.md --timeout-ms 1800000',
+		'node --require .../tsx/dist/preflight.cjs --import file:///.../tsx/dist/loader.mjs scripts/run-via-webterm.ts --job ai-digest',
+		'node .../tsx/dist/loader.mjs scripts/healthcheck-webterm-claude.ts',
+	];
+	for (const cmd of bot) {
+		it(`flags: ${cmd.slice(0, 50)}`, () => expect(DEFAULT_PATTERN.test(cmd)).toBe(true));
+	}
+	for (const cmd of notBot) {
+		it(`ignores: ${cmd.slice(0, 50)}`, () => expect(DEFAULT_PATTERN.test(cmd)).toBe(false));
+	}
+});
 
 let testDir: string;
 let testTag: string;
