@@ -66,9 +66,17 @@ async function postJson(path: string, body: unknown) {
   return r;
 }
 async function gridText(id: string): Promise<string> {
-  const r = await api(`/api/sessions/${id}/text`);
+  // Nonce-delimited frame (claw-3btg.7): this grid text is consumed by an LLM
+  // downstream, so fetch it wrapped in one-time markers and validate the frame
+  // — a malicious/compromised TUI can't forge the closing delimiter to smuggle
+  // instructions. Falls back to the raw body on pre-nonce servers.
+  const r = await api(`/api/sessions/${id}/text?delimit=nonce`);
   if (!r.ok) throw new Error(`GET /text -> ${r.status}`);
-  return await r.text();
+  const body = await r.text();
+  const m = body.match(/^<<<WEBTERM_OUTPUT_([0-9a-f]{8})>>>\n([\s\S]*)\n<<<END_WEBTERM_OUTPUT_\1>>>$/);
+  if (m) return m[2];
+  if (body.startsWith("<<<WEBTERM_OUTPUT_")) throw new Error("nonce frame validation failed — truncated or forged delimiter");
+  return body; // pre-nonce server
 }
 async function paste(id: string, data: string) { await postJson(`/api/sessions/${id}/input`, { kind: "paste", data }); }
 async function send(id: string, data: string) { await postJson(`/api/sessions/${id}/input`, { kind: "text", data }); }

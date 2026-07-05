@@ -44,6 +44,9 @@ const WEBTERM_URL = process.env.WEBTERM_URL ?? "http://127.0.0.1:7681";
 const WEBTERM_UI_URL = process.env.WEBTERM_UI_URL ?? "http://127.0.0.1:5173";
 const CWD = process.env.WEBTERM_CWD ?? `${process.env.HOME}/projects/claudeclaw`;
 const CLAUDE_CMD = process.env.WEBTERM_CLAUDE_CMD ?? "claude --dangerously-skip-permissions";
+// Direct-spawn mode (claw-3btg.1/.12): when set, mirror production — claude IS
+// the PTY child via command[] argv; no boot command is typed into a shell.
+const DIRECT_SPAWN_CMD = (process.env.WEBTERM_DIRECT_SPAWN_CMD ?? "").split(/\s+/).filter(Boolean);
 const COLS = Number(process.env.WEBTERM_COLS ?? 120);
 const ROWS = Number(process.env.WEBTERM_ROWS ?? 40);
 const BOOT_TIMEOUT_MS = Number(process.env.BOOT_TIMEOUT_MS ?? 30_000);
@@ -110,14 +113,21 @@ function infoLine(text: string) {
 
 // ----- webterm API -----
 
-async function createSession(): Promise<{ id: string; cols: number; rows: number }> {
+async function createSession(): Promise<{ id: string; cols: number; rows: number; command?: string[] }> {
   const res = await fetch(`${WEBTERM_URL}/api/sessions`, {
     method: "POST",
     headers: { "content-type": "application/json", ...authHeaders },
-    body: JSON.stringify({ title: "healthcheck", cols: COLS, rows: ROWS, cwd: CWD }),
+    body: JSON.stringify({
+      title: "healthcheck", cols: COLS, rows: ROWS, cwd: CWD,
+      ...(DIRECT_SPAWN_CMD.length > 0 ? { command: DIRECT_SPAWN_CMD } : {}),
+    }),
   });
   if (!res.ok) throw new Error(`POST /api/sessions returned ${res.status}: ${await res.text()}`);
-  return await res.json();
+  const body = (await res.json()) as { id: string; cols: number; rows: number; command?: string[] };
+  if (DIRECT_SPAWN_CMD.length > 0 && !Array.isArray(body.command)) {
+    throw new Error("direct-spawn requested but the server did not echo command[] — check WEBTERM_SPAWN_ALLOWLIST");
+  }
+  return body;
 }
 
 async function killSession(id: string): Promise<void> {
@@ -212,7 +222,11 @@ async function main(): Promise<number> {
   process.stderr.write(c.dim(`webterm api    = ${WEBTERM_URL}\n`));
   if (includeUiCheck) process.stderr.write(c.dim(`webterm ui     = ${WEBTERM_UI_URL}\n`));
   process.stderr.write(c.dim(`cwd            = ${CWD}\n`));
-  process.stderr.write(c.dim(`claude command = ${CLAUDE_CMD}\n`));
+  process.stderr.write(c.dim(
+    DIRECT_SPAWN_CMD.length > 0
+      ? `direct spawn = ${DIRECT_SPAWN_CMD.join(" ")}\n`
+      : `claude command = ${CLAUDE_CMD} (legacy shell boot)\n`,
+  ));
   process.stderr.write(c.dim(`prompt         = ${JSON.stringify(HEALTHCHECK_PROMPT)}\n`));
   process.stderr.write(c.dim(`expect contains = ${JSON.stringify(HEALTHCHECK_EXPECT)}\n`));
   process.stderr.write("\n");
@@ -264,9 +278,13 @@ async function main(): Promise<number> {
     await step(
       `boot claude in ${CWD}`,
       async () => {
-        infoLine(`sending: ${CLAUDE_CMD}`);
+        if (DIRECT_SPAWN_CMD.length > 0) {
+          infoLine("direct spawn: claude is the PTY child — no boot command to type");
+        } else {
+          infoLine(`sending: ${CLAUDE_CMD}`);
+          await sendInput(session.id, CLAUDE_CMD);
+        }
         infoLine(`waiting for boot prompt-ready (timeout ${BOOT_TIMEOUT_MS}ms)`);
-        await sendInput(session.id, CLAUDE_CMD);
         await waitForPromptReady(sse!, 1, BOOT_TIMEOUT_MS);
       },
       `if it times out: claude might be hitting the "trust this folder" dialog (claw-g790). Use a cwd you've opened with \`claude\` at least once.`,
