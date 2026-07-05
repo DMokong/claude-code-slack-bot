@@ -193,14 +193,51 @@ function findBottomPromptRow(lines: string[], promptMarker: string): number {
   return -1;
 }
 
+// East Asian wide ranges as xterm's wcwidth sees them: CJK ideographs, Kana,
+// Hangul, fullwidth forms, wide punctuation. Emoji deliberately stay width-1 —
+// that matches the emulator's current rendering (claw-nsdh), and the point is
+// to measure the GRID, not ideal Unicode.
+function isWideCodePoint(cp: number): boolean {
+  return (
+    (cp >= 0x1100 && cp <= 0x115f) ||   // Hangul Jamo
+    (cp >= 0x2e80 && cp <= 0x303e) ||   // CJK radicals + symbols
+    (cp >= 0x3041 && cp <= 0x33ff) ||   // Kana, CJK symbols
+    (cp >= 0x3400 && cp <= 0x4dbf) ||   // CJK Ext A
+    (cp >= 0x4e00 && cp <= 0x9fff) ||   // CJK Unified
+    (cp >= 0xa000 && cp <= 0xa4cf) ||   // Yi
+    (cp >= 0xac00 && cp <= 0xd7a3) ||   // Hangul syllables
+    (cp >= 0xf900 && cp <= 0xfaff) ||   // CJK compat ideographs
+    (cp >= 0xfe30 && cp <= 0xfe4f) ||   // CJK compat forms
+    (cp >= 0xff00 && cp <= 0xff60) ||   // Fullwidth forms
+    (cp >= 0xffe0 && cp <= 0xffe6) ||   // Fullwidth signs
+    (cp >= 0x20000 && cp <= 0x2fffd) || // CJK Ext B+
+    (cp >= 0x30000 && cp <= 0x3fffd)
+  );
+}
+
+// Width of a row in terminal COLUMNS (claw-3btg.5): the grid hard-wraps by
+// columns, and a full-width CJK row occupies 2 columns per glyph while
+// String.length counts 1 — measuring with .length made wrapped CJK prose look
+// far short of the wrap threshold, so unwrapWordWrap treated genuine wraps as
+// intentional newlines and mangled paragraphs.
+export function displayWidth(line: string): number {
+  let w = 0;
+  for (const ch of line) {
+    const cp = ch.codePointAt(0);
+    w += cp !== undefined && isWideCodePoint(cp) ? 2 : 1;
+  }
+  return w;
+}
+
 // Unwrap word-wrapped continuation lines while PRESERVING intentional newlines
 // (code blocks, short list/code lines). claude's TUI hard-wraps long prose at
 // the grid width, so a row is a wrap-continuation only if the PREVIOUS physical
 // row actually reached near the terminal width. A short previous row (e.g. a
 // line of code) means the newline was intentional — don't join (H4).
 //
-// `lines` are normalized so every entry's `.length` equals its true grid width
-// (the assistant marker is replaced with an equal-width indent upstream).
+// `lines` are normalized so the assistant marker is replaced with an
+// equal-width indent upstream; widths are measured in terminal columns via
+// displayWidth (NOT .length — see claw-3btg.5).
 function unwrapWordWrap(lines: string[], indent: number, cols: number): string[] {
   // A wrapped row breaks at a word boundary, leaving up to ~one word of slack.
   // Real captures: wrapped prose fills cols-1..cols-4 (116-119 of 120); code
@@ -229,7 +266,7 @@ function unwrapWordWrap(lines: string[], indent: number, cols: number): string[]
     } else {
       out.push(body);
     }
-    prevWidth = line.length;
+    prevWidth = displayWidth(line);
   }
   return out;
 }
@@ -337,7 +374,7 @@ export function extractTurn(
 
   // Grid width: the full-width chrome rows (── rules, status bar) set it.
   // Fall back to a sane default if the grid is unusually narrow.
-  const cols = Math.max(40, ...lines.map((l) => l.length));
+  const cols = Math.max(40, ...lines.map((l) => displayWidth(l)));
   const unwrapped = unwrapWordWrap(assistantRaw, assistantMarker.length, cols);
   const assistant = unwrapped.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 
@@ -371,7 +408,7 @@ export function extractSegments(
   }
 
   const { segments } = walkTurn(lines, echoEnd, turnEnd, assistantMarker, promptMarker);
-  const cols = Math.max(40, ...lines.map((l) => l.length));
+  const cols = Math.max(40, ...lines.map((l) => displayWidth(l)));
   const out: Segment[] = [];
   for (const seg of segments) {
     if (seg.kind === "prose") {

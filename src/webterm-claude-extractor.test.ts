@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { extractTurn, formatTurnForSlack, extractActivity, extractSegments, isGridIdle } from "./webterm-claude-extractor";
+import { extractTurn, formatTurnForSlack, extractActivity, extractSegments, isGridIdle, displayWidth } from "./webterm-claude-extractor";
 
 const FIXTURE_DIR = join(__dirname, "..", "test", "fixtures", "webterm-grids");
 
@@ -731,5 +731,55 @@ describe("suffixed live spinner is chrome, not prose (claw-gxzq)", () => {
     expect(segs.map((s) => s.kind)).toEqual(["prose"]);
     expect(segs[0].text).toContain("here's the plan");
     expect(segs.some((s) => s.text.includes("Nesting"))).toBe(false);
+  });
+});
+
+describe("width-aware unwrap for CJK (claw-3btg.5)", () => {
+  it("displayWidth counts East Asian wide glyphs as two columns", () => {
+    expect(displayWidth("abc")).toBe(3);
+    expect(displayWidth("你好")).toBe(4);
+    expect(displayWidth("a你b好c")).toBe(7);
+    expect(displayWidth("ハングル한글")).toBe(12);
+  });
+
+  it("joins genuinely wrapped full-width CJK prose that String.length under-measures", () => {
+    // 120-column grid. The wrapped CJK row is 59 wide glyphs (2 + 118 = 120
+    // display columns) but only 61 code units — far below the 96-column wrap
+    // threshold if measured with .length.
+    const cjkRow = "试".repeat(59);
+    const grid = [
+      "❯ 中文测试",
+      "",
+      `⏺ ${cjkRow}`,
+      "  续行内容在这里",
+      "",
+      "─".repeat(120),
+      "❯",
+      "─".repeat(120),
+      "   Opus 4.8 (1M context) │ ⏱ 5s",
+    ].join("\n");
+    const turn = extractTurn(grid, "中文测试");
+    expect(turn).not.toBeNull();
+    // Wrapped continuation must JOIN, not stay a separate line.
+    expect(turn!.assistant).toContain(`${cjkRow} 续行内容在这里`);
+    expect(turn!.assistant.split("\n")).toHaveLength(1);
+  });
+
+  it("keeps intentional short CJK lines separate (no over-joining)", () => {
+    const grid = [
+      "❯ 列表",
+      "",
+      "⏺ 第一行短句",
+      "  第二行短句",
+      "",
+      "─".repeat(120),
+      "❯",
+      "─".repeat(120),
+      "   Opus 4.8 (1M context) │ ⏱ 5s",
+    ].join("\n");
+    const turn = extractTurn(grid, "列表");
+    expect(turn).not.toBeNull();
+    // Previous row is far below the wrap threshold — newline was intentional.
+    expect(turn!.assistant.split("\n").length).toBeGreaterThan(1);
   });
 });
