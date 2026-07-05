@@ -783,3 +783,17 @@ describe("width-aware unwrap for CJK (claw-3btg.5)", () => {
     expect(turn!.assistant.split("\n").length).toBeGreaterThan(1);
   });
 });
+
+describe("cast-replay fixture pipeline (claw-3btg.6)", () => {
+  // 11-cast-replay-count.txt is NOT hand-captured: it was produced by
+  // recording a real direct-spawn claude turn (asciicast in
+  // 11-cast-replay-count.cast) and replaying it through webterm's
+  // replayCastToText harness. When claude's TUI chrome changes, re-record and
+  // re-replay instead of hand-editing grid text.
+  it("extracts the turn from a grid produced by cast replay", () => {
+    const grid = readFileSync(join(__dirname, "../test/fixtures/webterm-grids/11-cast-replay-count.txt"), "utf8");
+    const turn = extractTurn(grid, "count from 1 to 5, one number per line, nothing else");
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant.split("\n")).toEqual(["1", "2", "3", "4", "5"]);
+  });
+});

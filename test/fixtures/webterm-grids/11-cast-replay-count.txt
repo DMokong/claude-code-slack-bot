@@ -1,0 +1,40 @@
+
+ ▐▛███▜▌   Claude Code v2.1.201
+▝▜█████▛▘  Sonnet 4.6 with high effort · Claude Max
+  ▘▘ ▝▝    ~/projects/claudeclaw
+
+ ⚠ 2 MCP servers need authentication · run /mcp
+
+❯ count from 1 to 5, one number per line, nothing else
+
+⏺ 1
+  2
+  3
+  4
+  5
+
+✻ Crunched for 2s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                                                       ● high · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Sonnet 4.6 │ ████░░░░░░░░░░░░░░░░ 21%%/200k (3) │ $0.15 │ ⏱ 9s
+   main ● │ ~/projects/claudeclaw │ v2.1.201
+   🧠 ████░░░░░░ 89/200 │ 5 topics (431L) │ ✏ never ⚠ recall index needed
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
