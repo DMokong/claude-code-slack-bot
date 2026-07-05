@@ -1397,6 +1397,80 @@ describe("decodeSlackEntities", () => {
   });
 });
 
+describe("direct-spawn session creation (claw-3btg.1)", () => {
+  let mock: ReturnType<typeof makeMockWebterm>;
+  let slack: ReturnType<typeof makeSlack>;
+  let handler: WebtermRuntimeHandler;
+
+  beforeEach(() => {
+    mock = makeMockWebterm();
+    slack = makeSlack();
+    handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local",
+      fetchImpl: mock.fetchImpl,
+      cwd: "/tmp/test",
+      pasteSettleMs: 5,
+      extractStableMs: 10,
+      turnPollMs: 20,
+      directSpawnCommand: ["/opt/bin/claude", "--dangerously-skip-permissions"],
+    });
+  });
+
+  it("creates the session with a command argv and never types a boot command into a shell", async () => {
+    const req = { channelId: "C1", threadTs: "1234.5", text: "what is 2+2?", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    // claude IS the PTY child — first prompt-ready is the claude prompt.
+    mock.emitPromptReady(id);
+    // The FIRST inputs are the user's message (paste + Enter) — no boot input.
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 2);
+    mock.setText(id, buildTurnGrid(req.text, "2 plus 2 equals 4."));
+    mock.emitPromptReady(id);
+    await p;
+
+    const create = mock.calls.find((c) => c.method === "POST" && c.url.endsWith("/api/sessions"))!;
+    expect(create.body.command.slice(0, 2)).toEqual(["/opt/bin/claude", "--dangerously-skip-permissions"]);
+    expect(create.body.command[2]).toBe("--append-system-prompt");
+    // Channel context rides as a raw argv element — no shell quoting layer.
+    expect(create.body.command[3]).toContain("channel ID: C1");
+    expect(create.body.command[3]).toContain("thread: 1234.5");
+
+    const inputs = mock.sessions.get(id)!.inputs;
+    expect(inputs[0].data).toContain("what is 2+2?");
+    for (const i of inputs) {
+      expect(i.data ?? "").not.toContain("--append-system-prompt");
+    }
+    expect(slack.posted[0].text).toContain("2 plus 2 equals 4.");
+  });
+
+  it("legacy shell mode is unchanged: no command argv in the create body", async () => {
+    const legacy = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local",
+      fetchImpl: mock.fetchImpl,
+      cwd: "/tmp/test",
+      pasteSettleMs: 5,
+      extractStableMs: 10,
+      turnPollMs: 20,
+    });
+    const req = { channelId: "C1", threadTs: "T9", text: "hi", slack: slack.client };
+    const p = legacy.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot done
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    mock.setText(id, buildTurnGrid("hi", "hello"));
+    mock.emitPromptReady(id);
+    await p;
+
+    const create = mock.calls.find((c) => c.method === "POST" && c.url.endsWith("/api/sessions"))!;
+    expect(create.body.command).toBeUndefined();
+    // Boot command was typed into the shell (legacy path).
+    const inputs = mock.sessions.get(id)!.inputs;
+    expect(inputs[0].data).toContain("--append-system-prompt");
+  });
+});
+
 async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

@@ -111,6 +111,13 @@ export interface WebtermRuntimeOpts {
   // Sliding inactivity window for the relay loop (claw-gxzq): if the grid
   // doesn't change for this long and the session isn't idle, abort as wedged.
   slidingInactivityMs?: number;
+  // Direct-spawn argv (claw-3btg.1): when non-empty, sessions are created with
+  // webterm's command[] option so the PTY child IS claude — no wrapping shell
+  // to fall through to when claude dies (H1 becomes structural). argv[0] must
+  // be an absolute path on the webterm server's WEBTERM_SPAWN_ALLOWLIST.
+  // Empty (default) = legacy mode: boot claude by typing claudeCmd into the
+  // session's shell.
+  directSpawnCommand?: string[];
   fetchImpl?: typeof fetch;
 }
 
@@ -173,6 +180,7 @@ export class WebtermRuntimeHandler {
       statusPollMs: opts.statusPollMs ?? DEFAULT_STATUS_POLL_MS,
       turnPollMs: opts.turnPollMs ?? DEFAULT_TURN_POLL_MS,
       slidingInactivityMs: opts.slidingInactivityMs ?? DEFAULT_SLIDING_INACTIVITY_MS,
+      directSpawnCommand: opts.directSpawnCommand ?? [],
       fetchImpl: opts.fetchImpl ?? fetch,
     };
     const baseFetch = this.opts.fetchImpl;
@@ -715,13 +723,17 @@ export class WebtermRuntimeHandler {
   // Channel context restores what the SDK path provided via appendSystemPrompt:
   // claude inside the REPL knows which channel it's serving and can pick up
   // channel-specific protocols from CLAUDE.md (e.g. #cc-ai discourse mode).
-  private buildBootCmd(channelId: string, threadTs: string | undefined): string {
-    const ctx =
+  private buildBootCtx(channelId: string, threadTs: string | undefined): string {
+    return (
       `You are responding in Slack channel ID: ${channelId}` +
       (threadTs ? ` (thread: ${threadTs})` : "") +
       `. Check CLAUDE.md for any channel-specific protocols (e.g., #cc-ai Discourse Protocol). ` +
-      `Format responses for Slack: plain prose, minimal markdown, no wide tables.`;
-    return `${this.opts.claudeCmd} --append-system-prompt ${shellSingleQuote(ctx)}`;
+      `Format responses for Slack: plain prose, minimal markdown, no wide tables.`
+    );
+  }
+
+  private buildBootCmd(channelId: string, threadTs: string | undefined): string {
+    return `${this.opts.claudeCmd} --append-system-prompt ${shellSingleQuote(this.buildBootCtx(channelId, threadTs))}`;
   }
 
   private async adoptOrCreateSession(
@@ -814,6 +826,7 @@ export class WebtermRuntimeHandler {
     threadTs: string | undefined,
     cwd?: string,
   ): Promise<WebtermSession> {
+    const directSpawn = this.opts.directSpawnCommand.length > 0;
     const res = await this.authedFetch(`${this.opts.webtermUrl}/api/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -822,6 +835,11 @@ export class WebtermRuntimeHandler {
         cols: this.opts.cols,
         rows: this.opts.rows,
         cwd: cwd ?? this.opts.cwd,
+        // Direct spawn: claude is the PTY child; context rides as a raw argv
+        // element (no shell-quoting layer between us and claude).
+        ...(directSpawn
+          ? { command: [...this.opts.directSpawnCommand, "--append-system-prompt", this.buildBootCtx(channelId, threadTs)] }
+          : {}),
       }),
     });
     if (!res.ok) throw new Error(`createSession ${res.status}: ${await res.text()}`);
@@ -838,8 +856,10 @@ export class WebtermRuntimeHandler {
       freshlyBooted: true,
     };
     session.ssePromise = this.runSseListener(session);
-    // Boot claude inside the session.
-    await this.sendInput(session.id, this.buildBootCmd(channelId, threadTs));
+    // Legacy shell mode: boot claude by typing the command into the shell.
+    // Direct-spawn mode skips this — claude IS the PTY child and is already
+    // booting when the POST returns.
+    if (!directSpawn) await this.sendInput(session.id, this.buildBootCmd(channelId, threadTs));
     try {
       await this.completeBootHandshake(session);
     } catch (err) {

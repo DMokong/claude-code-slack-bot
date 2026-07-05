@@ -143,6 +143,7 @@ export class SlackHandler {
         claudeCmd: config.webterm.claudeCmd,
         token: config.webterm.token,
         streamStatus: config.webterm.streamStatus,
+        directSpawnCommand: config.webterm.directSpawnCmd,
       });
       this.logger.info('Webterm runtime enabled', {
         routeAll: config.webterm.routeAll,
@@ -150,6 +151,7 @@ export class SlackHandler {
         url: config.webterm.url,
         authed: !!config.webterm.token,
         streamStatus: config.webterm.streamStatus,
+        directSpawn: config.webterm.directSpawnCmd.length > 0,
       });
     }
   }

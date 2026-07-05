@@ -87,6 +87,13 @@ export const config = {
     url: process.env.WEBTERM_URL || 'http://127.0.0.1:7681',
     cwd: process.env.WEBTERM_CWD || `${process.env.HOME}/projects/claudeclaw`,
     claudeCmd: process.env.WEBTERM_CLAUDE_CMD || 'claude --dangerously-skip-permissions',
+    // Direct-spawn argv (claw-3btg.1): whitespace-separated, argv[0] must be
+    // an ABSOLUTE path on the webterm server's WEBTERM_SPAWN_ALLOWLIST, e.g.
+    // WEBTERM_DIRECT_SPAWN_CMD="/Users/me/.local/bin/claude --dangerously-skip-permissions".
+    // Unset = legacy mode (type claudeCmd into the session shell).
+    directSpawnCmd: (process.env.WEBTERM_DIRECT_SPAWN_CMD || '')
+      .split(/\s+/)
+      .filter((s) => s.length > 0),
     token: resolveWebtermToken(),
     // Live-activity status streaming (claw-1ta5) — on by default; set
     // WEBTERM_STREAM_STATUS=0 to disable and post a single final message.
