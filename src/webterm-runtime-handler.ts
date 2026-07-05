@@ -83,6 +83,7 @@ const DEFAULT_STATUS_POLL_MS = 2_000;
 // Floor between status updates — keeps us well under Slack's chat.update rate
 // limit even on long tool-heavy turns.
 const MIN_STATUS_UPDATE_MS = 1_500;
+const DEFAULT_IDLE_OUTPUT_FLOOR_MS = 250;
 
 export interface WebtermRuntimeOpts {
   webtermUrl?: string;
@@ -111,6 +112,12 @@ export interface WebtermRuntimeOpts {
   // Sliding inactivity window for the relay loop (claw-gxzq): if the grid
   // doesn't change for this long and the session isn't idle, abort as wedged.
   slidingInactivityMs?: number;
+  // Minimum ms since the PTY's last output before an idle-LOOKING frame may
+  // count toward stable idle (claw-3btg.4). Claude removes its spinner while
+  // still streaming prose; a frame fetched mid-paint reads as idle but the
+  // server's x-webterm-last-output-ms header exposes the fresh output. Servers
+  // without the header skip the floor (backward compatible).
+  idleOutputFloorMs?: number;
   // Direct-spawn argv (claw-3btg.1): when non-empty, sessions are created with
   // webterm's command[] option so the PTY child IS claude — no wrapping shell
   // to fall through to when claude dies (H1 becomes structural). argv[0] must
@@ -180,6 +187,7 @@ export class WebtermRuntimeHandler {
       statusPollMs: opts.statusPollMs ?? DEFAULT_STATUS_POLL_MS,
       turnPollMs: opts.turnPollMs ?? DEFAULT_TURN_POLL_MS,
       slidingInactivityMs: opts.slidingInactivityMs ?? DEFAULT_SLIDING_INACTIVITY_MS,
+      idleOutputFloorMs: opts.idleOutputFloorMs ?? DEFAULT_IDLE_OUTPUT_FLOOR_MS,
       directSpawnCommand: opts.directSpawnCommand ?? [],
       fetchImpl: opts.fetchImpl ?? fetch,
     };
@@ -340,6 +348,10 @@ export class WebtermRuntimeHandler {
     let lastGrid = "";
     let lastChangeAt = Date.now();
     let lastBaseline = session.promptReadyCount;
+    // Server-side mutation seq from the last /text fetch (claw-3btg.3): lets
+    // the loop wake on GET /wait the moment the grid changes instead of
+    // sleeping a full poll tick. -1 = not yet known.
+    let lastSeq = -1;
     // Streaming cursor (claw-gxzq Task 3): the Slack ts of the prose block
     // currently growing in-place, and its segment index. statusTs seeds the
     // first block so it reuses the placeholder; growingIndex === -1 means the
@@ -349,18 +361,32 @@ export class WebtermRuntimeHandler {
     const streaming = this.streamEnabled(req);
 
     for (;;) {
-      await this.waitForPromptReadyOrPoll(session, lastBaseline + 1, this.opts.turnPollMs);
+      // While confirming idle, wait only the short settle window — a static
+      // grid never fires /wait, so the confirming observation must come from
+      // the timer, not the change signal (claw-3btg.3).
+      const waitMs = idleObservations > 0
+        ? Math.min(this.opts.turnPollMs, this.opts.extractStableMs)
+        : this.opts.turnPollMs;
+      await this.waitForTurnSignal(session, lastBaseline + 1, lastSeq, waitMs);
       lastBaseline = session.promptReadyCount;
       if (!session.alive) {
         await stopStatus();
-        // Deliver whatever we have; warn only if nothing was posted.
-        if (postedSegments === 0) await deliver(":warning: lost the webterm session mid-turn.");
+        // Deliver whatever we have; warn only if nothing was posted. The
+        // terminal-retained corpse tells us WHY it died (claw-3btg.2).
+        if (postedSegments === 0) {
+          const cause = await this.fetchExitCause(session.id);
+          await deliver(`:warning: lost the webterm session mid-turn${cause ? ` — ${cause}` : ""}.`);
+        }
         return;
       }
 
       let grid: string;
+      let lastOutputMs = NaN;
       try {
-        grid = await this.fetchGridForRelay(session.id, req.text);
+        const meta = await this.fetchGridForRelay(session.id, req.text);
+        grid = meta.grid;
+        lastOutputMs = meta.lastOutputMs;
+        if (Number.isFinite(meta.seq)) lastSeq = meta.seq;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.error("grid fetch failed mid-turn", { sessionId: session.id, error: msg });
@@ -372,8 +398,11 @@ export class WebtermRuntimeHandler {
       const gridChanged = grid !== lastGrid;
       if (gridChanged) { lastGrid = grid; lastChangeAt = Date.now(); }
 
-      // Cache the idle check so we call isGridIdle once per iteration.
-      const idle = isGridIdle(grid);
+      // Idle = idle-looking grid AND paint settled (claw-3btg.4): claude drops
+      // its spinner while still streaming, so a frame with output younger than
+      // the floor is a mid-paint pause, not the prompt. No header = no floor.
+      const paintSettled = !Number.isFinite(lastOutputMs) || lastOutputMs >= this.opts.idleOutputFloorMs;
+      const idle = isGridIdle(grid) && paintSettled;
 
       // Turn-end: idle prompt, stable across IDLE_STABLE_POLLS observations
       // with NO grid change in between — a changed grid restarts the count at
@@ -424,21 +453,55 @@ export class WebtermRuntimeHandler {
     }
   }
 
-  // Resolve when promptReadyCount reaches `target` (fast path), the session
-  // dies, or `ms` elapses (poll tick) — whichever is first. Unlike
-  // waitForPromptReady, a timeout is NOT an error here: it just means "poll the
-  // grid now" (claw-fcd9/etj7 fix A).
-  private async waitForPromptReadyOrPoll(
+  // Resolve when promptReadyCount reaches `target` (fast path), the server
+  // reports a grid change past `sinceSeq` (claw-3btg.3), the session dies, or
+  // `ms` elapses (poll tick) — whichever is first. A timeout is NOT an error:
+  // it just means "poll the grid now" (claw-fcd9/etj7 fix A). The server wait
+  // is best-effort — a pre-/wait server just falls back to the deadline.
+  private async waitForTurnSignal(
     session: WebtermSession,
     target: number,
+    sinceSeq: number,
     ms: number,
   ): Promise<void> {
     const deadline = Date.now() + ms;
-    for (;;) {
-      if (!session.alive) return;
-      if (session.promptReadyCount >= target) return;
-      if (Date.now() >= deadline) return;
-      await sleep(50);
+    const ctl = new AbortController();
+    let serverWoke = false;
+    const serverWait = this.authedFetch(
+      `${this.opts.webtermUrl}/api/sessions/${session.id}/wait?since=${Math.max(0, sinceSeq)}&timeoutMs=${ms}`,
+      { signal: ctl.signal },
+    ).then(async (res) => {
+      if (res.ok) {
+        const body = (await res.json()) as { changed?: boolean };
+        serverWoke = body.changed === true;
+      }
+    }).catch(() => { /* aborted or unsupported */ });
+    try {
+      for (;;) {
+        if (!session.alive) return;
+        if (session.promptReadyCount >= target) return;
+        if (serverWoke) return;
+        if (Date.now() >= deadline) return;
+        await sleep(50);
+      }
+    } finally {
+      ctl.abort();
+      await serverWait;
+    }
+  }
+
+  // "claude exited (code N)" from the terminal-retained session, or "" when
+  // the server predates retention / the session is already evicted.
+  private async fetchExitCause(sessionId: string): Promise<string> {
+    try {
+      const res = await this.authedFetch(`${this.opts.webtermUrl}/api/sessions`);
+      if (!res.ok) return "";
+      const list = (await res.json()) as { id: string; exitCode?: number | null }[];
+      const s = list.find((x) => x.id === sessionId);
+      if (!s || s.exitCode === undefined) return "";
+      return `claude exited (code ${s.exitCode ?? "signal"})`;
+    } catch {
+      return "";
     }
   }
 
@@ -551,12 +614,17 @@ export class WebtermRuntimeHandler {
   // user echo scrolled off the 40-row viewport (claw-fcd9). Mirrors
   // fetchAndExtract's recovery but returns the TEXT so the caller can both
   // extractSegments and isGridIdle from one fetch.
-  private async fetchGridForRelay(sessionId: string, userText: string): Promise<string> {
-    const viewport = await this.fetchGridText(sessionId);
-    if (extractSegments(viewport, userText).length > 0) return viewport;
+  private async fetchGridForRelay(
+    sessionId: string,
+    userText: string,
+  ): Promise<{ grid: string; seq: number; lastOutputMs: number }> {
+    const meta = await this.fetchGridMeta(sessionId);
+    if (extractSegments(meta.text, userText).length > 0) {
+      return { grid: meta.text, seq: meta.seq, lastOutputMs: meta.lastOutputMs };
+    }
     const scrollback = await this.fetchScrollback(sessionId);
-    if (!scrollback) return viewport;
-    return scrollback + "\n" + viewport;
+    const grid = scrollback ? scrollback + "\n" + meta.text : meta.text;
+    return { grid, seq: meta.seq, lastOutputMs: meta.lastOutputMs };
   }
 
   // Relay prose blocks that appeared since `postedSegments`. Tool blocks never
@@ -926,7 +994,7 @@ export class WebtermRuntimeHandler {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ kind: opts.kind ?? "text", data: text }),
     });
-    if (!txt.ok && txt.status !== 204) throw new Error(`sendInput text ${txt.status}`);
+    await this.checkInputResponse(txt, sessionId, "sendInput text");
     // Wait out claude's paste-aggregation window before Enter, or the
     // submit keystroke is swallowed into the paste (see DEFAULT_PASTE_SETTLE_MS).
     if (opts.settleMs) await sleep(opts.settleMs);
@@ -939,13 +1007,44 @@ export class WebtermRuntimeHandler {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ kind: "keys", keys }),
     });
-    if (!res.ok && res.status !== 204) throw new Error(`sendKeys ${res.status}`);
+    await this.checkInputResponse(res, sessionId, "sendKeys");
+  }
+
+  // Shared /input response handling: 409 = terminal-retained dead session
+  // (claw-3btg.2) — surface the exit cause; 200 = echo ack (claw-3btg.8) —
+  // echoed:false means the PTY swallowed the write silently, worth a warning
+  // but not a failure (the turn loop's own guards decide what to do next).
+  private async checkInputResponse(res: Response, sessionId: string, what: string): Promise<void> {
+    if (res.status === 409) {
+      let exitCode: number | null | undefined;
+      try { exitCode = ((await res.json()) as { exitCode?: number | null }).exitCode; } catch { /* no body */ }
+      throw new Error(`session exited (code ${exitCode ?? "unknown"})`);
+    }
+    if (!res.ok && res.status !== 204) throw new Error(`${what} ${res.status}`);
+    if (res.status === 200) {
+      try {
+        const ack = (await res.json()) as { echoed?: boolean };
+        if (ack.echoed === false) {
+          this.logger.warn("input not echoed within the barrier — PTY may be wedged", { sessionId });
+        }
+      } catch { /* older server: empty/plain body */ }
+    }
+  }
+
+  private async fetchGridMeta(sessionId: string): Promise<{ text: string; seq: number; lastOutputMs: number }> {
+    const res = await this.authedFetch(`${this.opts.webtermUrl}/api/sessions/${sessionId}/text`);
+    if (!res.ok) throw new Error(`fetchGridText ${res.status}`);
+    return {
+      text: await res.text(),
+      // NaN when the server predates the headers — callers treat that as
+      // "signal unavailable" and keep legacy behavior.
+      seq: Number(res.headers.get("x-webterm-seq") ?? NaN),
+      lastOutputMs: Number(res.headers.get("x-webterm-last-output-ms") ?? NaN),
+    };
   }
 
   private async fetchGridText(sessionId: string): Promise<string> {
-    const res = await this.authedFetch(`${this.opts.webtermUrl}/api/sessions/${sessionId}/text`);
-    if (!res.ok) throw new Error(`fetchGridText ${res.status}`);
-    return await res.text();
+    return (await this.fetchGridMeta(sessionId)).text;
   }
 
   // Fetch the rows that scrolled off the top of the viewport (claw-fcd9). The

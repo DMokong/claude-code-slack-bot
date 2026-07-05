@@ -17,6 +17,9 @@ function makeMockWebterm() {
     title?: string;
     alive?: boolean;
     lastActivityAt?: number;
+    seq: number;
+    lastOutputMs: number;
+    exitCode?: number | null;
   }>();
   const calls: { method: string; url: string; body?: any }[] = [];
 
@@ -29,7 +32,7 @@ function makeMockWebterm() {
 
     if (method === "POST" && url.endsWith("/api/sessions")) {
       const id = `sess-${nextSessionId++}`;
-      sessions.set(id, { sseController: null, inputs: [], text: "", scrollback: "", title: body?.title, alive: true });
+      sessions.set(id, { sseController: null, inputs: [], text: "", scrollback: "", title: body?.title, alive: true, seq: 0, lastOutputMs: 10_000 });
       return new Response(JSON.stringify({ id }), { status: 201, headers: { "content-type": "application/json" } });
     }
     if (method === "GET" && url.endsWith("/api/sessions")) {
@@ -40,6 +43,9 @@ function makeMockWebterm() {
         lastActivityAt: s.lastActivityAt ?? Date.now(),
         cols: 120,
         rows: 40,
+        seq: s.seq,
+        lastOutputMsAgo: s.lastOutputMs,
+        ...(s.exitCode !== undefined ? { exitCode: s.exitCode } : {}),
       }));
       return new Response(JSON.stringify(list), { status: 200, headers: { "content-type": "application/json" } });
     }
@@ -62,8 +68,17 @@ function makeMockWebterm() {
       const id = mInput[1];
       const s = sessions.get(id);
       if (!s) return new Response("not found", { status: 404 });
+      if (s.alive === false) {
+        return new Response(JSON.stringify({ error: "session exited", exitCode: s.exitCode ?? null }), {
+          status: 409, headers: { "content-type": "application/json" },
+        });
+      }
       s.inputs.push(body);
-      return new Response(null, { status: 204 });
+      const preSeq = s.seq;
+      s.seq++; // the echo
+      return new Response(JSON.stringify({ echoed: true, preSeq, postSeq: s.seq }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
     }
     const mScrollback = url.match(/\/api\/sessions\/([^\/?]+)\/scrollback/);
     if (method === "GET" && mScrollback) {
@@ -79,12 +94,33 @@ function makeMockWebterm() {
         headers: { "content-type": "application/json" },
       });
     }
+    const mWait = url.match(/\/api\/sessions\/([^\/?]+)\/wait/);
+    if (method === "GET" && mWait) {
+      const id = mWait[1];
+      const s = sessions.get(id);
+      if (!s) return new Response("not found", { status: 404 });
+      const u = new URL(url);
+      const since = Number(u.searchParams.get("since") ?? 0);
+      const timeoutMs = Number(u.searchParams.get("timeoutMs") ?? 10_000);
+      const deadline = Date.now() + timeoutMs;
+      const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
+      while (s.seq <= since && s.alive !== false && Date.now() < deadline && !signal?.aborted) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      return new Response(
+        JSON.stringify({ seq: s.seq, changed: s.seq > since, alive: s.alive !== false }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
     const mText = url.match(/\/api\/sessions\/([^\/?]+)\/text/);
     if (method === "GET" && mText) {
       const id = mText[1];
       const s = sessions.get(id);
       if (!s) return new Response("not found", { status: 404 });
-      return new Response(s.text, { status: 200 });
+      return new Response(s.text, {
+        status: 200,
+        headers: { "x-webterm-seq": String(s.seq), "x-webterm-last-output-ms": String(s.lastOutputMs) },
+      });
     }
     const mDelete = url.match(/\/api\/sessions\/([^\/?]+)$/);
     if (method === "DELETE" && mDelete) {
@@ -110,6 +146,8 @@ function makeMockWebterm() {
     emitExit(sessionId: string, code: number) {
       const s = sessions.get(sessionId);
       if (!s?.sseController) throw new Error(`no SSE controller for ${sessionId}`);
+      s.alive = false;
+      s.exitCode = code;
       const payload = `event: exit\ndata: {"code":${code}}\n\n`;
       s.sseController.enqueue(new TextEncoder().encode(payload));
       s.sseController.close();
@@ -118,6 +156,12 @@ function makeMockWebterm() {
       const s = sessions.get(sessionId);
       if (!s) throw new Error(`no session ${sessionId}`);
       s.text = text;
+      s.seq++;
+    },
+    setLastOutputMs(sessionId: string, ms: number) {
+      const s = sessions.get(sessionId);
+      if (!s) throw new Error(`no session ${sessionId}`);
+      s.lastOutputMs = ms;
     },
     setScrollback(sessionId: string, scrollback: string) {
       const s = sessions.get(sessionId);
@@ -125,7 +169,7 @@ function makeMockWebterm() {
       s.scrollback = scrollback;
     },
     seedSession(id: string, title: string, text: string, lastActivityAt?: number) {
-      sessions.set(id, { sseController: null, inputs: [], text, scrollback: "", title, alive: true, lastActivityAt });
+      sessions.set(id, { sseController: null, inputs: [], text, scrollback: "", title, alive: true, lastActivityAt, seq: 0, lastOutputMs: 10_000 });
     },
     onlySessionId() {
       const ids = Array.from(sessions.keys());
@@ -1468,6 +1512,96 @@ describe("direct-spawn session creation (claw-3btg.1)", () => {
     // Boot command was typed into the shell (legacy path).
     const inputs = mock.sessions.get(id)!.inputs;
     expect(inputs[0].data).toContain("--append-system-prompt");
+  });
+});
+
+describe("wave2 primitives (claw-3btg.2/.3/.4/.8)", () => {
+  let mock: ReturnType<typeof makeMockWebterm>;
+  let slack: ReturnType<typeof makeSlack>;
+
+  beforeEach(() => {
+    mock = makeMockWebterm();
+    slack = makeSlack();
+  });
+
+  it("/wait wakes the turn loop: completes with a huge poll interval and no post-answer prompt-ready", async () => {
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 60_000,
+    });
+    const req = { channelId: "C1", threadTs: "T1", text: "ping", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id); // boot only — never again
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    mock.setText(id, buildTurnGrid("ping", "pong answer"));
+    await p; // without /wait pacing this would hang for turnPollMs=60s and time out
+    expect(slack.posted.map((m) => m.text).join("\n")).toContain("pong answer");
+  }, 8000);
+
+  it("input to a retained dead session posts the exit cause (409 path)", async () => {
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20,
+    });
+    const req1 = { channelId: "C1", threadTs: "T2", text: "first", slack: slack.client };
+    const p1 = handler.handleMessage(req1);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    mock.setText(id, buildTurnGrid("first", "done one"));
+    mock.emitPromptReady(id);
+    await p1;
+
+    // claude dies inside the PTY; the frozen grid still matches the model-row
+    // regex, so the hot-path guard passes — the 409 is the wall that holds.
+    mock.sessions.get(id)!.alive = false;
+    mock.sessions.get(id)!.exitCode = 137;
+    const req2 = { channelId: "C1", threadTs: "T2", text: "second", slack: slack.client };
+    await handler.handleMessage(req2);
+    const all = slack.posted.map((m) => m.text).join("\n");
+    expect(all).toContain("session exited (code 137)");
+  });
+
+  it("stable-idle gate defers while the screen is still painting (lastOutputMs floor, claw-3btg.4)", async () => {
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, idleOutputFloorMs: 250,
+    });
+    const req = { channelId: "C1", threadTs: "T3", text: "paint", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    // Answer grid arrives but output is FRESH — an idle-looking frame mid-paint.
+    mock.setLastOutputMs(id, 0);
+    mock.setText(id, buildTurnGrid("paint", "half-rendered answer"));
+    await sleep(150);
+    expect(slack.posted).toHaveLength(0); // floor held the finalize back
+    mock.setLastOutputMs(id, 5_000); // paint settled
+    await p;
+    expect(slack.posted.map((m) => m.text).join("\n")).toContain("half-rendered answer");
+  });
+
+  it("mid-turn death posts the exit cause from the retained session (claw-3btg.2)", async () => {
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20,
+    });
+    const req = { channelId: "C1", threadTs: "T4", text: "doomed", slack: slack.client };
+    const p = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    mock.emitExit(id, 1); // claude crashes mid-turn
+    await p;
+    const all = slack.posted.map((m) => m.text).join("\n");
+    expect(all).toContain("lost the webterm session mid-turn");
+    expect(all).toContain("code 1");
   });
 });
 
