@@ -39,3 +39,6 @@ coverage/
 
 # Config state
 config/thread-state.json
+# backup env files must never be committed
+.env.bak*
+.env.*.bak
