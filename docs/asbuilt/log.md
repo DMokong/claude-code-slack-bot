@@ -35,3 +35,4 @@
 * **Fold**: BACKFILL-slackbot-03 enriched [src/permission-mcp-server.ts](/src/permission-mcp-server.md) (accuracy-audited).
 * **Fold**: BACKFILL-slackbot-03 enriched [src/telemetry.ts](/src/telemetry.md) (accuracy-audited).
 * **Fold**: BACKFILL-slackbot-03 enriched [src/types.ts](/src/types.md) (accuracy-audited).
+* **Refresh**: 1 regenerated, 0 new, 1 stale.

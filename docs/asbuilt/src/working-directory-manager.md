@@ -23,7 +23,7 @@ explains:
   - src/working-directory-manager.ts#WorkingDirectoryManager.setWorkingDirectory
 stale: false
 stale_reason: ""
-graph_hash: eca695496946f7f044ecd15540643dc5d7d83983eb7612677d398da52a748505
+graph_hash: 9759b135c07f30574b7bf7d243258420038465ac1a4c3772e3f14e18ef5df067
 ---
 
 # Structure

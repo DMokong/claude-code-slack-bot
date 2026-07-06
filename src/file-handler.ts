@@ -72,25 +72,28 @@ export class FileHandler {
         fs.mkdirSync(targetDir, { recursive: true });
       }
       const timestamp = Date.now();
-      const tempPath = targetDir
+      const savedPath = targetDir
         ? path.join(saveDir, `${timestamp}-${file.name}`)
         : path.join(saveDir, `slack-file-${timestamp}-${file.name}`);
       
-      fs.writeFileSync(tempPath, buffer);
+      fs.writeFileSync(savedPath, buffer);
 
       const processed: ProcessedFile = {
-        path: tempPath,
+        path: savedPath,
         name: file.name,
         mimetype: file.mimetype,
         isImage: this.isImageFile(file.mimetype),
         isText: this.isTextFile(file.mimetype),
         size: file.size,
-        tempPath,
+        // tempPath marks scratch files for post-message cleanup. Channel-routed
+        // files (targetDir) are deliveries to their permanent destination —
+        // they must never carry the cleanup marker (claw-3t2q).
+        ...(targetDir ? {} : { tempPath: savedPath }),
       };
 
       this.logger.info('File downloaded successfully', {
         name: file.name,
-        tempPath,
+        path: savedPath,
         isImage: processed.isImage,
         isText: processed.isText,
       });

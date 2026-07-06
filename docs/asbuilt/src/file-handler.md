@@ -21,28 +21,28 @@ explains:
   - src/file-handler.ts#FileHandler.isImageFile
   - src/file-handler.ts#FileHandler.isTextFile
   - src/file-handler.ts#ProcessedFile
-stale: false
-stale_reason: ""
-graph_hash: eca695496946f7f044ecd15540643dc5d7d83983eb7612677d398da52a748505
+stale: true
+stale_reason: "changed: src/file-handler.ts#FileHandler.downloadFile"
+graph_hash: 9759b135c07f30574b7bf7d243258420038465ac1a4c3772e3f14e18ef5df067
 ---
 
 # Structure
 
 ## Exports
-- `FileHandler` (class, lines 18-184)
+- `FileHandler` (class, lines 18-187)
 - `ProcessedFile` (interface, lines 8-16)
 
 ## Symbols
 | Symbol | Kind | Span | Exported |
 |---|---|---|---|
-| `FileHandler` | class | 18-184 | yes |
-| `FileHandler.cleanupTempFiles` | method | 163-174 | yes |
+| `FileHandler` | class | 18-187 | yes |
+| `FileHandler.cleanupTempFiles` | method | 166-177 | yes |
 | `FileHandler.downloadAndProcessFiles` | method | 25-47 | yes |
-| `FileHandler.downloadFile` | method | 49-103 | yes |
-| `FileHandler.formatFilePrompt` | method | 123-161 | yes |
-| `FileHandler.getSupportedFileTypes` | method | 176-183 | yes |
-| `FileHandler.isImageFile` | method | 105-107 | yes |
-| `FileHandler.isTextFile` | method | 109-121 | yes |
+| `FileHandler.downloadFile` | method | 49-106 | yes |
+| `FileHandler.formatFilePrompt` | method | 126-164 | yes |
+| `FileHandler.getSupportedFileTypes` | method | 179-186 | yes |
+| `FileHandler.isImageFile` | method | 108-110 | yes |
+| `FileHandler.isTextFile` | method | 112-124 | yes |
 | `ProcessedFile` | interface | 8-16 | yes |
 
 ## Calls out

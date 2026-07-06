@@ -4,7 +4,7 @@
     "name": "web-tree-sitter",
     "version": "0.24.5"
   },
-  "target_commit": "1f5a1c082515e1bf0e7acc6f17b2239efa0c43b9",
+  "target_commit": "393efa8e85fc85ea8d3750bb962a8f1bd61447ef",
   "symbols": [
     {
       "id": "scripts/healthcheck-webterm-claude.ts#SseHandle",
@@ -595,9 +595,9 @@
       "file": "src/file-handler.ts",
       "span": [
         18,
-        184
+        187
       ],
-      "content_hash": "8f758546fb46aa53217bbc4ef15b6d364e507c5ea8f54094223b69117bdbfe80",
+      "content_hash": "57e2de64244ad2b28b0be0196b8fd7bb930595e5046506460bb97d0c26b3c835",
       "exported": true
     },
     {
@@ -605,8 +605,8 @@
       "kind": "method",
       "file": "src/file-handler.ts",
       "span": [
-        163,
-        174
+        166,
+        177
       ],
       "content_hash": "a2c5851b704d9f37f5fd523d87e00b8616756cc415baec94cdee2e3d1f2acf57",
       "exported": true
@@ -628,9 +628,9 @@
       "file": "src/file-handler.ts",
       "span": [
         49,
-        103
+        106
       ],
-      "content_hash": "6b2eb165cc19ffac398a2ae58e93806d61cd7a427bc98f4f07765a2cb50e2ff9",
+      "content_hash": "b453a8287f185322867efa3088b95502168ca342a72954a9d8d4ce8488ffc488",
       "exported": true
     },
     {
@@ -638,8 +638,8 @@
       "kind": "method",
       "file": "src/file-handler.ts",
       "span": [
-        123,
-        161
+        126,
+        164
       ],
       "content_hash": "186fab52b8477e1bba76834dfbf12e0cff8c758f679c7344f97f514b03e94c90",
       "exported": true
@@ -649,8 +649,8 @@
       "kind": "method",
       "file": "src/file-handler.ts",
       "span": [
-        176,
-        183
+        179,
+        186
       ],
       "content_hash": "36979c76343d6e8f1fa88c171b1c2b29955b96dc3cddad9072f81f81a174065d",
       "exported": true
@@ -660,8 +660,8 @@
       "kind": "method",
       "file": "src/file-handler.ts",
       "span": [
-        105,
-        107
+        108,
+        110
       ],
       "content_hash": "36de876e402cc094b8dd50feb54d0335c3805f02efc94eb2c11bd88d9e5956e5",
       "exported": true
@@ -671,8 +671,8 @@
       "kind": "method",
       "file": "src/file-handler.ts",
       "span": [
-        109,
-        121
+        112,
+        124
       ],
       "content_hash": "2845181e7bb279965c92f87b939e39de15abce573e7ea12c7eda163cd8da0aca",
       "exported": true
