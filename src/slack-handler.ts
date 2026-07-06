@@ -7,7 +7,6 @@ import { FileHandler, ProcessedFile } from './file-handler';
 import { ImageUploader } from './image-uploader';
 import { TodoManager, Todo } from './todo-manager';
 import { McpManager } from './mcp-manager';
-import { permissionServer } from './permission-mcp-server';
 import { config } from './config';
 import { withThreadLock } from './thread-lock';
 import { SlackStreamManager } from './slack-streamer';
@@ -519,7 +518,8 @@ export class SlackHandler {
       // Add thinking reaction to original message
       await this.updateMessageReaction(sessionKey, '🤔');
 
-      // Create Slack context for permission prompts
+      // Slack context threads channel/thread/user into the system prompt so
+      // channel-specific protocols (e.g. #cc-ai) can be honored.
       const slackContext = {
         channel,
         threadTs: thread_ts,
@@ -1288,34 +1288,6 @@ export class SlackHandler {
         this.logger.info('Bot added to channel', { channel: event.channel });
         await this.handleChannelJoin(event.channel, say);
       }
-    });
-
-    // Handle permission approval button clicks
-    this.app.action('approve_tool', async ({ ack, body, respond }) => {
-      await ack();
-      const approvalId = (body as any).actions[0].value;
-      this.logger.info('Tool approval granted', { approvalId });
-      
-      permissionServer.resolveApproval(approvalId, true);
-      
-      await respond({
-        response_type: 'ephemeral',
-        text: '✅ Tool execution approved'
-      });
-    });
-
-    // Handle permission denial button clicks
-    this.app.action('deny_tool', async ({ ack, body, respond }) => {
-      await ack();
-      const approvalId = (body as any).actions[0].value;
-      this.logger.info('Tool approval denied', { approvalId });
-      
-      permissionServer.resolveApproval(approvalId, false);
-      
-      await respond({
-        response_type: 'ephemeral',
-        text: '❌ Tool execution denied'
-      });
     });
 
     // Cleanup inactive sessions periodically

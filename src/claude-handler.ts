@@ -104,7 +104,7 @@ export class ClaudeHandler {
     }
     
     if (options.mcpServers && Object.keys(options.mcpServers).length > 0) {
-      // Allow all MCP tools by default, plus permission prompt tool
+      // Allow all MCP tools by default
       const defaultMcpTools = this.mcpManager.getDefaultAllowedTools();
       if (defaultMcpTools.length > 0) {
         options.allowedTools = defaultMcpTools;

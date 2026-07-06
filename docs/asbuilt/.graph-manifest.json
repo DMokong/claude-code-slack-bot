@@ -4,7 +4,7 @@
     "name": "web-tree-sitter",
     "version": "0.24.5"
   },
-  "target_commit": "976d1924246216d3a842bddd154a5f757317a726",
+  "target_commit": "74de1b755aedec97072f13dae5a0f9db2aaf5823",
   "symbols": [
     {
       "id": "scripts/healthcheck-webterm-claude.ts#SseHandle",
@@ -355,7 +355,7 @@
         11,
         204
       ],
-      "content_hash": "e6ed29c4473b05bac5b66b56785a76c93e1f68d9cee5ec69da8b0006b9d3cd18",
+      "content_hash": "cf3c6da15746aace798d75236a6b095884bdcad35ac49275cf74629c8acd237b",
       "exported": true
     },
     {
@@ -454,7 +454,7 @@
         72,
         156
       ],
-      "content_hash": "a29cccc6752002ec6245cbcb9d1e85b10df6ce6ed47bc6940879e9bbb364ca6e",
+      "content_hash": "dd8f877ab617a61bc83bf7a92814313973d2d0187ec77906d0cb8a1077326905",
       "exported": true
     },
     {
@@ -1063,105 +1063,6 @@
       "exported": true
     },
     {
-      "id": "src/permission-mcp-server.ts#PermissionMCPServer",
-      "kind": "class",
-      "file": "src/permission-mcp-server.ts",
-      "span": [
-        28,
-        258
-      ],
-      "content_hash": "9d9bbcb85d44001699abf3531d7de174e5574566ed06751d8e75344a291438fb",
-      "exported": false
-    },
-    {
-      "id": "src/permission-mcp-server.ts#PermissionMCPServer.constructor",
-      "kind": "method",
-      "file": "src/permission-mcp-server.ts",
-      "span": [
-        36,
-        51
-      ],
-      "content_hash": "1922342682177a025b4f226a773c5c5a6150bf43af452bf04a30353b43396b7c",
-      "exported": false
-    },
-    {
-      "id": "src/permission-mcp-server.ts#PermissionMCPServer.handlePermissionPrompt",
-      "kind": "method",
-      "file": "src/permission-mcp-server.ts",
-      "span": [
-        99,
-        220
-      ],
-      "content_hash": "5887f8074627610b9ec382ef08a27889ab5dc6902c74100456fccd7017bfd7a4",
-      "exported": false
-    },
-    {
-      "id": "src/permission-mcp-server.ts#PermissionMCPServer.resolveApproval",
-      "kind": "method",
-      "file": "src/permission-mcp-server.ts",
-      "span": [
-        241,
-        251
-      ],
-      "content_hash": "b95c16c002343a6573b1dc3752df9cc8c0ff68d085a3746eab0eb92afa260231",
-      "exported": false
-    },
-    {
-      "id": "src/permission-mcp-server.ts#PermissionMCPServer.run",
-      "kind": "method",
-      "file": "src/permission-mcp-server.ts",
-      "span": [
-        253,
-        257
-      ],
-      "content_hash": "68566ae608e4183fedd4455626d25e7082b2071797ba4d2d2fccb97ccc71f766",
-      "exported": false
-    },
-    {
-      "id": "src/permission-mcp-server.ts#PermissionMCPServer.setupHandlers",
-      "kind": "method",
-      "file": "src/permission-mcp-server.ts",
-      "span": [
-        53,
-        97
-      ],
-      "content_hash": "e5b2d882a23746762a645e721a17a0fb1f5a8d076906cfa147b28895d153064f",
-      "exported": false
-    },
-    {
-      "id": "src/permission-mcp-server.ts#PermissionMCPServer.waitForApproval",
-      "kind": "method",
-      "file": "src/permission-mcp-server.ts",
-      "span": [
-        222,
-        238
-      ],
-      "content_hash": "e4a131036892583971ea76e23280936fc75afb791c191ebf8dcc293aaca34263",
-      "exported": false
-    },
-    {
-      "id": "src/permission-mcp-server.ts#PermissionRequest",
-      "kind": "interface",
-      "file": "src/permission-mcp-server.ts",
-      "span": [
-        14,
-        20
-      ],
-      "content_hash": "12be72ecf1875b0824c7d351c273e53297e6726384304fa0f17a70c8cd9e488c",
-      "exported": false
-    },
-    {
-      "id": "src/permission-mcp-server.ts#PermissionResponse",
-      "kind": "interface",
-      "file": "src/permission-mcp-server.ts",
-      "span": [
-        22,
-        26
-      ],
-      "content_hash": "1d5b15a4b70810ee6c96627e813dda10ec20b0e4c8260d58675a79c010c3ea2e",
-      "exported": false
-    },
-    {
       "id": "src/session-id.ts#threadToSessionId",
       "kind": "function",
       "file": "src/session-id.ts",
@@ -1342,8 +1243,8 @@
       "kind": "interface",
       "file": "src/slack-handler.ts",
       "span": [
-        95,
-        110
+        94,
+        109
       ],
       "content_hash": "24d6d6b09bc0e75120f7cfddd34f353f4d9132b8bce3f871dc581f739582b118",
       "exported": false
@@ -1353,10 +1254,10 @@
       "kind": "class",
       "file": "src/slack-handler.ts",
       "span": [
-        112,
-        1327
+        111,
+        1299
       ],
-      "content_hash": "a6492a69ca3d12f5e2ce0a8eed855f1e10632c7682c910ec2c0117e3856d70a0",
+      "content_hash": "86acf9b126344ec0e16e27a7f074cb12ed5c9d7a140fe2b6ac745bb3b9464fe6",
       "exported": true
     },
     {
@@ -1364,8 +1265,8 @@
       "kind": "method",
       "file": "src/slack-handler.ts",
       "span": [
-        129,
-        157
+        128,
+        156
       ],
       "content_hash": "3c94d7c6def30b90a322befc287cda408b4ade7c82276e27b197df84a7f8f8eb",
       "exported": true
@@ -1485,8 +1386,8 @@
       "kind": "method",
       "file": "src/slack-handler.ts",
       "span": [
-        170,
-        175
+        169,
+        174
       ],
       "content_hash": "bcb4c98cf56b3eba0d93296d38e1fb2a6b1727dda5899b30f4c3a9951b9375a7",
       "exported": true
@@ -1518,10 +1419,10 @@
       "kind": "method",
       "file": "src/slack-handler.ts",
       "span": [
-        177,
+        176,
         801
       ],
-      "content_hash": "dc6167eab23d8374b19010948db155b27f88a197113abf57498acdf953ce6556",
+      "content_hash": "18659f8980d6d8f6d4a0e4f965157517f8142a806387173a6b734b658eef09c4",
       "exported": true
     },
     {
@@ -1596,9 +1497,9 @@
       "file": "src/slack-handler.ts",
       "span": [
         1247,
-        1326
+        1298
       ],
-      "content_hash": "894e2a7d4b85092d27d912594be2c21a6966c373dc0acf21aab58b18879bb407",
+      "content_hash": "1f0493411378d244a090da8296b5a5d3f32ec8aa8c77134023021133a1614228",
       "exported": true
     },
     {
@@ -1617,8 +1518,8 @@
       "kind": "method",
       "file": "src/slack-handler.ts",
       "span": [
-        164,
-        168
+        163,
+        167
       ],
       "content_hash": "69456962fbdc3ad9a04f10750d4bc493b060b78dc2f03da93818ed7038c0c61a",
       "exported": true
@@ -1661,8 +1562,8 @@
       "kind": "function",
       "file": "src/slack-handler.ts",
       "span": [
-        43,
-        55
+        42,
+        54
       ],
       "content_hash": "9f262eb65b883c8ff26933f3b63d61ae2d19fb88b70df70515822e0f47db4771",
       "exported": true
@@ -1672,8 +1573,8 @@
       "kind": "function",
       "file": "src/slack-handler.ts",
       "span": [
-        80,
-        89
+        79,
+        88
       ],
       "content_hash": "0347ec78889f7a49599871e3175a5e6f392215eb3a69f71287bfb78aa753cb8e",
       "exported": false
@@ -1683,8 +1584,8 @@
       "kind": "function",
       "file": "src/slack-handler.ts",
       "span": [
-        65,
-        78
+        64,
+        77
       ],
       "content_hash": "06a97529be77949936b3a30b5f70c8d91e893d7c7922e8597c88cce16f3205b5",
       "exported": true
@@ -5008,121 +4909,6 @@
       "resolved": "src/logger.ts#Logger.warn"
     },
     {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.constructor",
-      "toName": "setupHandlers",
-      "resolved": "src/permission-mcp-server.ts#PermissionMCPServer.setupHandlers"
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.handlePermissionPrompt",
-      "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.handlePermissionPrompt",
-      "toName": "now",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.handlePermissionPrompt",
-      "toName": "parse",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.handlePermissionPrompt",
-      "toName": "postMessage",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.handlePermissionPrompt",
-      "toName": "random",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.handlePermissionPrompt",
-      "toName": "stringify",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.handlePermissionPrompt",
-      "toName": "substr",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.handlePermissionPrompt",
-      "toName": "toString",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.handlePermissionPrompt",
-      "toName": "update",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.handlePermissionPrompt",
-      "toName": "waitForApproval",
-      "resolved": "src/permission-mcp-server.ts#PermissionMCPServer.waitForApproval"
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.resolveApproval",
-      "toName": "delete",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.resolveApproval",
-      "toName": "get",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.resolveApproval",
-      "toName": "resolve",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.run",
-      "toName": "connect",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.run",
-      "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.setupHandlers",
-      "toName": "handlePermissionPrompt",
-      "resolved": "src/permission-mcp-server.ts#PermissionMCPServer.handlePermissionPrompt"
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.setupHandlers",
-      "toName": "setRequestHandler",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.waitForApproval",
-      "toName": "delete",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.waitForApproval",
-      "toName": "has",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.waitForApproval",
-      "toName": "resolve",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.waitForApproval",
-      "toName": "set",
-      "resolved": null
-    },
-    {
-      "from": "src/permission-mcp-server.ts#PermissionMCPServer.waitForApproval",
-      "toName": "setTimeout",
-      "resolved": null
-    },
-    {
       "from": "src/session-id.ts#threadToSessionId",
       "toName": "uuidv5",
       "resolved": null
@@ -6069,16 +5855,6 @@
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.setupEventHandlers",
-      "toName": "ack",
-      "resolved": null
-    },
-    {
-      "from": "src/slack-handler.ts#SlackHandler.setupEventHandlers",
-      "toName": "action",
-      "resolved": null
-    },
-    {
-      "from": "src/slack-handler.ts#SlackHandler.setupEventHandlers",
       "toName": "cleanupInactiveSessions",
       "resolved": "src/claude-handler.ts#ClaudeHandler.cleanupInactiveSessions"
     },
@@ -6125,16 +5901,6 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.setupEventHandlers",
       "toName": "replace",
-      "resolved": null
-    },
-    {
-      "from": "src/slack-handler.ts#SlackHandler.setupEventHandlers",
-      "toName": "resolveApproval",
-      "resolved": "src/permission-mcp-server.ts#PermissionMCPServer.resolveApproval"
-    },
-    {
-      "from": "src/slack-handler.ts#SlackHandler.setupEventHandlers",
-      "toName": "respond",
       "resolved": null
     },
     {

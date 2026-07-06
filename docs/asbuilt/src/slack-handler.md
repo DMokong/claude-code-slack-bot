@@ -21,24 +21,26 @@ explains:
   - src/slack-handler.ts#SlackHandler.setupEventHandlers
   - src/slack-handler.ts#isRateLimitError
   - src/slack-handler.ts#parseEngineCommand
-stale: false
-stale_reason: ""
-graph_hash: 182c4a76ac41fbb6fe303225cec8eeb326b319e5416f34834c8fa4503042e983
+stale: true
+stale_reason: "changed: src/slack-handler.ts#SlackHandler,
+  src/slack-handler.ts#SlackHandler.handleMessage,
+  src/slack-handler.ts#SlackHandler.setupEventHandlers"
+graph_hash: 8a0d575a40873cd07242dedf282b03d07a103f46e0d9f41720eeb5c6f031704a
 ---
 
 # Structure
 
 ## Exports
-- `SlackHandler` (class, lines 112-1327)
-- `emojiToShortcode` (function, lines 43-55)
-- `parseEngineCommand` (function, lines 65-78)
+- `SlackHandler` (class, lines 111-1299)
+- `emojiToShortcode` (function, lines 42-54)
+- `parseEngineCommand` (function, lines 64-77)
 
 ## Symbols
 | Symbol | Kind | Span | Exported |
 |---|---|---|---|
-| `MessageEvent` | interface | 95-110 | no |
-| `SlackHandler` | class | 112-1327 | yes |
-| `SlackHandler.constructor` | method | 129-157 | yes |
+| `MessageEvent` | interface | 94-109 | no |
+| `SlackHandler` | class | 111-1299 | yes |
+| `SlackHandler.constructor` | method | 128-156 | yes |
 | `SlackHandler.createNewTodoMessage` | method | 1079-1095 | yes |
 | `SlackHandler.extractTextContent` | method | 928-936 | yes |
 | `SlackHandler.formatBashTool` | method | 1001-1003 | yes |
@@ -49,25 +51,25 @@ graph_hash: 182c4a76ac41fbb6fe303225cec8eeb326b319e5416f34834c8fa4503042e983
 | `SlackHandler.formatToolUse` | method | 938-972 | yes |
 | `SlackHandler.formatWriteTool` | method | 990-995 | yes |
 | `SlackHandler.getBotUserId` | method | 1186-1197 | yes |
-| `SlackHandler.getImageUploader` | method | 170-175 | yes |
+| `SlackHandler.getImageUploader` | method | 169-174 | yes |
 | `SlackHandler.getToolStatusDescription` | method | 881-919 | yes |
 | `SlackHandler.handleChannelJoin` | method | 1199-1232 | yes |
-| `SlackHandler.handleMessage` | method | 177-801 | yes |
+| `SlackHandler.handleMessage` | method | 176-801 | yes |
 | `SlackHandler.handleTodoUpdate` | method | 1020-1077 | yes |
 | `SlackHandler.handleTodoWrite` | method | 1015-1018 | yes |
 | `SlackHandler.isMcpInfoCommand` | method | 1178-1180 | yes |
 | `SlackHandler.isMcpReloadCommand` | method | 1182-1184 | yes |
 | `SlackHandler.sendCopilotResponse` | method | 803-838 | yes |
 | `SlackHandler.setThreadStatus` | method | 845-875 | yes |
-| `SlackHandler.setupEventHandlers` | method | 1247-1326 | yes |
+| `SlackHandler.setupEventHandlers` | method | 1247-1298 | yes |
 | `SlackHandler.shortenPath` | method | 921-926 | yes |
-| `SlackHandler.shutdown` | method | 164-168 | yes |
+| `SlackHandler.shutdown` | method | 163-167 | yes |
 | `SlackHandler.truncateString` | method | 1009-1013 | yes |
 | `SlackHandler.updateMessageReaction` | method | 1097-1155 | yes |
 | `SlackHandler.updateTaskProgressReaction` | method | 1157-1176 | yes |
-| `emojiToShortcode` | function | 43-55 | yes |
-| `isRateLimitError` | function | 80-89 | no |
-| `parseEngineCommand` | function | 65-78 | yes |
+| `emojiToShortcode` | function | 42-54 | yes |
+| `isRateLimitError` | function | 79-88 | no |
+| `parseEngineCommand` | function | 64-77 | yes |
 
 ## Calls out
 - `SlackHandler.constructor` → [Logger.info](/src/logger.md)
@@ -152,7 +154,6 @@ graph_hash: 182c4a76ac41fbb6fe303225cec8eeb326b319e5416f34834c8fa4503042e983
 - `SlackHandler.setupEventHandlers` → `SlackHandler.handleChannelJoin` (same file)
 - `SlackHandler.setupEventHandlers` → `SlackHandler.handleMessage` (same file)
 - `SlackHandler.setupEventHandlers` → [Logger.info](/src/logger.md)
-- `SlackHandler.setupEventHandlers` → [PermissionMCPServer.resolveApproval](/src/permission-mcp-server.md)
 - `SlackHandler.shutdown` → `SlackHandler.shutdown` (same file)
 - `SlackHandler.updateMessageReaction` → [Logger.debug](/src/logger.md)
 - `SlackHandler.updateMessageReaction` → `emojiToShortcode` (same file)

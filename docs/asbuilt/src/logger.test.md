@@ -14,7 +14,7 @@ explains:
   - src/logger.test.ts#todayFilename
 stale: false
 stale_reason: ""
-graph_hash: 182c4a76ac41fbb6fe303225cec8eeb326b319e5416f34834c8fa4503042e983
+graph_hash: 8a0d575a40873cd07242dedf282b03d07a103f46e0d9f41720eeb5c6f031704a
 ---
 
 # Structure

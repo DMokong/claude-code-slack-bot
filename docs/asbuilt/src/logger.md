@@ -25,7 +25,7 @@ explains:
   - src/logger.ts#todayKey
 stale: false
 stale_reason: ""
-graph_hash: 182c4a76ac41fbb6fe303225cec8eeb326b319e5416f34834c8fa4503042e983
+graph_hash: 8a0d575a40873cd07242dedf282b03d07a103f46e0d9f41720eeb5c6f031704a
 ---
 
 # Structure
@@ -94,8 +94,6 @@ graph_hash: 182c4a76ac41fbb6fe303225cec8eeb326b319e5416f34834c8fa4503042e983
 - `McpManager.loadConfiguration` in [src/mcp-manager.ts](/src/mcp-manager.md)
 - `McpManager.loadConfiguration` in [src/mcp-manager.ts](/src/mcp-manager.md)
 - `McpManager.validateServerConfig` in [src/mcp-manager.ts](/src/mcp-manager.md)
-- `PermissionMCPServer.handlePermissionPrompt` in [src/permission-mcp-server.ts](/src/permission-mcp-server.md)
-- `PermissionMCPServer.run` in [src/permission-mcp-server.ts](/src/permission-mcp-server.md)
 - `ensureSingleInstance` in [src/single-instance.ts](/src/single-instance.md)
 - `ensureSingleInstance` in [src/single-instance.ts](/src/single-instance.md)
 - `findOtherInstances` in [src/single-instance.ts](/src/single-instance.md)

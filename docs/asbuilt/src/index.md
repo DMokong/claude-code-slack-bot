@@ -13,7 +13,6 @@
 * [src/logger.test.ts](logger.test.md) - Skeleton concept for src/logger.test.ts (extracted; 1 symbols).
 * [src/logger.ts](logger.md) - Skeleton concept for src/logger.ts (extracted; 10 symbols).
 * [src/mcp-manager.ts](mcp-manager.md) - Skeleton concept for src/mcp-manager.ts (extracted; 13 symbols).
-* [src/permission-mcp-server.ts](permission-mcp-server.md) - Skeleton concept for src/permission-mcp-server.ts (extracted; 9 symbols).
 * [src/session-id.ts](session-id.md) - Skeleton concept for src/session-id.ts (extracted; 1 symbols).
 * [src/single-instance.test.ts](single-instance.test.md) - Skeleton concept for src/single-instance.test.ts (extracted; 5 symbols).
 * [src/single-instance.ts](single-instance.md) - Skeleton concept for src/single-instance.ts (extracted; 10 symbols).
