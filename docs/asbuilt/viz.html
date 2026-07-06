@@ -165,6 +165,8 @@ svg { display: block; width: 100%; height: 100%; cursor: grab; animation: fadein
 svg:active { cursor: grabbing; }
 .gl { font-size: 13px; letter-spacing: .3em; text-transform: uppercase; fill: var(--ink-3); opacity: .55; pointer-events: none; }
 .edge { stroke: var(--edge); fill: none; }
+.node { cursor: grab; }
+.node:active { cursor: grabbing; }
 .node circle.core { stroke: var(--paper); stroke-width: 1.25; transition: r .15s ease; }
 .node.skeleton circle.core { fill: var(--skeleton); }
 .node.accuracy circle.core { fill: var(--audited); }
@@ -342,9 +344,14 @@ const G = new Map(groups.map((g, i) => {
   const R = g === "src" ? 0 : 330;
   return [g, { x: Math.cos(a) * R, y: Math.sin(a) * R * 0.72 }];
 }));
+/* Initial scatter scales with group population — a fixed ±90px box is far
+   smaller than the summed node area of a 25-file cluster, and the settle
+   loop cools before the weak collision force can unpack it. */
+const groupCounts = new Map(groups.map(g => [g, nodes.filter(n => n.group === g).length]));
 for (const n of nodes) {
   const anchor = G.get(n.group), j1 = hash(n.id), j2 = hash(n.id + "y");
-  n.x = anchor.x + (j1 - 0.5) * 180; n.y = anchor.y + (j2 - 0.5) * 180;
+  const spread = 90 + 44 * Math.sqrt(groupCounts.get(n.group));
+  n.x = anchor.x + (j1 - 0.5) * spread * 2; n.y = anchor.y + (j2 - 0.5) * spread * 2;
   n.vx = 0; n.vy = 0;
   n.r = 4 + 2.3 * Math.sqrt(n.symbols || 1);
 }
@@ -370,11 +377,28 @@ function tick(alpha) {
   }
   for (const n of nodes) {
     const anchor = G.get(n.group);
-    n.vx += (anchor.x - n.x) * 0.012 * alpha * 2;
-    n.vy += (anchor.y - n.y) * 0.012 * alpha * 2;
+    n.vx += (anchor.x - n.x) * 0.008 * alpha * 2;
+    n.vy += (anchor.y - n.y) * 0.008 * alpha * 2;
     n.vx += -n.x * 0.002 * alpha; n.vy += -n.y * 0.002 * alpha;
     n.vx *= 0.82; n.vy *= 0.82;
     n.x += n.vx; n.y += n.vy;
+  }
+  /* Hard positional de-overlap: velocity-based forces freeze (alpha cools)
+     before overlaps resolve under the anchor spring, which is why clusters
+     used to settle as an overlapping pile. Positional correction is not
+     alpha-scaled, so packing resolves regardless of how cold the sim is.
+     The 14px padding also gives audited labels air. */
+  for (let i = 0; i < nodes.length; i++) for (let k = i + 1; k < nodes.length; k++) {
+    const a = nodes[i], b = nodes[k];
+    let dx = b.x - a.x, dy = b.y - a.y;
+    let d = Math.hypot(dx, dy);
+    if (d < 1) { dx = hash(a.id + k) - 0.5; dy = hash(b.id + i) - 0.5; d = Math.hypot(dx, dy); }
+    const min = a.r + b.r + 14;
+    if (d < min) {
+      const push = ((min - d) / d) * 0.5;
+      a.x -= dx * push; a.y -= dy * push;
+      b.x += dx * push; b.y += dy * push;
+    }
   }
 }
 
@@ -424,8 +448,38 @@ const nodeEls = nodes.map(n => {
   g.addEventListener("pointerenter", ev => hover(n, ev));
   g.addEventListener("pointermove", ev => moveTip(ev));
   g.addEventListener("pointerleave", () => unhover());
-  g.addEventListener("click", ev => { ev.stopPropagation(); select(n); });
+  g.addEventListener("pointerdown", ev => {
+    ev.stopPropagation(); // a node grab must not start a canvas pan
+    if (!vb) return;
+    const p = worldPoint(ev);
+    dragging = { n, dx: n.x - p.x, dy: n.y - p.y, moved: false };
+  });
+  g.addEventListener("click", ev => {
+    ev.stopPropagation();
+    if (suppressClick) { suppressClick = false; return; } // a drag is not a select
+    select(n);
+  });
   nodeLayer.appendChild(g); return g;
+});
+
+/* ---------- node dragging ---------- */
+let dragging = null;
+let suppressClick = false;
+function worldPoint(ev) {
+  const r = svg.getBoundingClientRect();
+  return { x: vb.x + ((ev.clientX - r.left) / r.width) * vb.w,
+           y: vb.y + ((ev.clientY - r.top) / r.height) * vb.h };
+}
+window.addEventListener("pointermove", ev => {
+  if (!dragging || !vb) return;
+  const p = worldPoint(ev);
+  dragging.n.x = p.x + dragging.dx; dragging.n.y = p.y + dragging.dy;
+  dragging.n.vx = 0; dragging.n.vy = 0;
+  dragging.moved = true;
+  positionAll();
+});
+window.addEventListener("pointerup", () => {
+  if (dragging) { suppressClick = dragging.moved; dragging = null; }
 });
 function positionAll() {
   links.forEach((l, i) => { const e = edgeEls[i];
