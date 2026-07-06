@@ -12,7 +12,9 @@ tags:
 enrichment: accuracy-audited
 from:
   - BACKFILL-slackbot-03
+  - BACKFILL-slackbot-06
 explains:
+  - src/file-handler.ts#FileHandler
   - src/file-handler.ts#FileHandler.cleanupTempFiles
   - src/file-handler.ts#FileHandler.downloadAndProcessFiles
   - src/file-handler.ts#FileHandler.downloadFile
@@ -22,9 +24,8 @@ explains:
   - src/file-handler.ts#FileHandler.isTextFile
   - src/file-handler.ts#ProcessedFile
 stale: true
-stale_reason: "changed: src/file-handler.ts#FileHandler.downloadFile,
-  src/file-handler.ts#FileHandler.getSupportedFileTypes"
-graph_hash: 8a0d575a40873cd07242dedf282b03d07a103f46e0d9f41720eeb5c6f031704a
+stale_reason: "changed: src/file-handler.ts#FileHandler.getSupportedFileTypes"
+graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 ---
 
 # Structure
@@ -64,36 +65,12 @@ graph_hash: 8a0d575a40873cd07242dedf282b03d07a103f46e0d9f41720eeb5c6f031704a
 - `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
 
 # Explanation
-FileHandler is the ingestion path for Slack file uploads: it downloads
-the raw attachment, classifies it (image/text/binary), and renders it
-into prompt text the SDK query can consume. It is deliberately dumb
-about content understanding - classification is mimetype-prefix
-matching, not content sniffing, and "reading" a file just means
-inlining its raw text (truncated) into the prompt string.
+FileHandler is the sole ingestion path for Slack file attachments in this bot. It has three jobs: download the raw bytes from Slack's private URL, classify the file (image / text / binary) purely by mimetype prefix, and render it into prompt text a Claude or Copilot turn can consume — or clean it up afterward. It is invoked exclusively from SlackHandler.handleMessage, once per message carrying file attachments, and its lifecycle (download -> prompt formatting -> cleanup) brackets a single turn.
 
 # Decisions
 - (BACKFILL-slackbot-03) Load-bearing gotcha for anyone extending channel-scoped file routing:
-`downloadFile` always sets the returned `ProcessedFile.tempPath` equal
-to `.path`, regardless of whether the file was written to `os.tmpdir()`
-or to a configured `targetDir` (channel file route). `cleanupTempFiles`
-then unconditionally `unlinkSync`s whatever `tempPath` it's given, and
-slack-handler.ts calls `cleanupTempFiles(processedFiles)` after every
-message unconditionally - including when a channel file route was
-active. Net effect: files that this module's own docstring says are
-"saved there instead of temp dir" (implying persistence) are deleted
-immediately after the response completes, exactly like real temp files.
-If channel-routed files are meant to survive past the triggering
-message, `ProcessedFile` needs a way to distinguish "this was a
-permanent route" from "this was a scratch temp file" (e.g. only
-populate `tempPath` when no `targetDir` was given), and
-`cleanupTempFiles` needs to respect that distinction. This is not
-currently guarded by a test as far as I could tell from this file alone.
-Separately: the 50MB size cutoff and the 10,000-character text-inline
-cutoff are both hardcoded magic numbers with no config knob - a future
-"why did my big file get silently dropped/truncated" investigation
-should start here. `getSupportedFileTypes()` is dead code (no callers
-anywhere in `src/`) - it looks like it was meant to back a help/status
-command that was never wired up, or was wired up and then removed.
+- (BACKFILL-slackbot-06) The central thing a future reader needs is the tempPath/targetDir distinction, fixed 2026-07-06 (claw-3t2q item 3, commit 976d1924): ProcessedFile.tempPath is the ONLY signal cleanupTempFiles uses to decide whether to unlink a file after a turn ends. Before the fix, downloadFile set tempPath to the same value as path unconditionally, so a channel's configured file route (config.channelFileRoutes, populated from the CHANNEL_FILE_ROUTES env var — meant to be a PERMANENT save location) had its files deleted by the same cleanup sweep that scrubs scratch temp files, directly contradicting the module's own docstring ('saved there instead of temp dir'). The fix is one conditional spread: '...(targetDir ? {} : { tempPath: savedPath })'. The rule for anyone touching this file going forward: routed deliveries must NEVER carry tempPath; only files written to os.tmpdir() may. Separately, getSupportedFileTypes() — a static list of supported extensions — was removed 2026-07-06 (commit 74de1b75) as confirmed dead code: grep found zero callers anywhere in src/, consistent with a help/status command that was either never wired up or lost its caller earlier. If a 'what files can I upload?' feature is wanted again it needs to be rebuilt and wired, not un-deleted. The 50MB size cutoff (downloadFile) and the 10,000-character text-inline cutoff (formatFilePrompt) remain hardcoded magic numbers with no config knob, untouched by this remediation round — a 'why did my big file silently get dropped/truncated' investigation still starts here. Unrelated finding from the same audit window: src/permission-server-start.js still does 'require(./permission-mcp-server.ts)', but that file was deleted in the sibling 2026-07-06 permission-flow removal and nothing in package.json or src/index.ts invokes permission-server-start.js anymore — it is now a dangling, unreferenced launcher pointing at a file that no longer exists, worth deleting in a follow-up so a future grep for 'permission' doesn't lead someone down a dead end.
 
 # Citations
 [1] BACKFILL-slackbot-03 evidence: /Users/dustincheng/projects/claudeclaw/docs/specs/asbuilt-living-kb/evidence/slackbot03-evidence.yml
+[2] BACKFILL-slackbot-06 evidence: /Users/dustincheng/projects/claudeclaw/docs/specs/asbuilt-living-kb/evidence/slackbot06-evidence.yml

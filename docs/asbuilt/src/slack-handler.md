@@ -13,6 +13,7 @@ tags:
 enrichment: accuracy-audited
 from:
   - BACKFILL-slackbot-01
+  - BACKFILL-slackbot-06
 explains:
   - src/slack-handler.ts#SlackHandler
   - src/slack-handler.ts#SlackHandler.constructor
@@ -21,11 +22,9 @@ explains:
   - src/slack-handler.ts#SlackHandler.setupEventHandlers
   - src/slack-handler.ts#isRateLimitError
   - src/slack-handler.ts#parseEngineCommand
-stale: true
-stale_reason: "changed: src/slack-handler.ts#SlackHandler,
-  src/slack-handler.ts#SlackHandler.handleMessage,
-  src/slack-handler.ts#SlackHandler.setupEventHandlers"
-graph_hash: 8a0d575a40873cd07242dedf282b03d07a103f46e0d9f41720eeb5c6f031704a
+stale: false
+stale_reason: ""
+graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 ---
 
 # Structure
@@ -165,10 +164,12 @@ graph_hash: 8a0d575a40873cd07242dedf282b03d07a103f46e0d9f41720eeb5c6f031704a
 - `start` in [src/index.ts](/src/index.ts.md)
 
 # Explanation
-This is the largest and most central module in the bot — effectively the state machine that decides, for every inbound Slack message, which of several very different code paths handles it (webterm-driven persistent Claude session, the classic Claude Code SDK streaming path, or GitHub Copilot), and that owns all the Slack-visible side effects (typing-status text, emoji reactions, streamed/batched message content, todo-list messages, image uploads). A future reader debugging "why didn't my message get to Claude" or "why is the bot double replying" should start by reading handleMessage's early-return waterfall in order — the order encodes real product decisions, not just code organization.
+SlackHandler is the message-routing brain of the bot — for every inbound Slack event it decides which of three very different execution paths handles it (the persistent webterm-driven Claude REPL, the classic claude -p SDK streaming path, or GitHub Copilot), and it owns every Slack-visible side effect along the way: typing-status text, emoji reactions, streamed or batched replies, todo-list messages, image uploads, and file-route acknowledgements.
 
 # Decisions
 - (BACKFILL-slackbot-01) The webterm-routing check happens near the very top of handleMessage, but it explicitly excludes messages carrying files AND explicitly excludes cwd/mcp bot-level commands — a code comment states this exclusion was added because "routeAll was swallowing them into claude," meaning an earlier version of this routing check had a real production bug where WEBTERM_ROUTE_ALL=1 silently broke `cwd` and `mcp` commands by sending them into the webterm's interactive Claude session instead of handling them as bot commands. Engine choice (Claude vs Copilot) is only persisted to disk when setBy is 'manual' or 'auto-fallback' — channel-default and global-default resolutions are deliberately left unpersisted so that editing config/channel- engine.json takes effect on the next message rather than being frozen by a stale persisted value from the first message in a thread; this is easy to get wrong when adding a new engine-resolution source, since the natural instinct is "resolve once, persist always." The Copilot path bypasses withThreadLock entirely (only the Claude SDK path is serialized per-thread) — Copilot's CLI invocation is a single request/response with no resumable session state to protect, so there was no correctness reason to lock it, but this does mean a user who rapid-fires multiple messages in "copilot mode" can have out-of-order Copilot replies land in Slack, unlike the Claude path where the lock guarantees in-order delivery. Working directory resolution (WorkingDirectoryManager) that gates almost the entire flow is in-memory only — it is never persisted to thread-state.json or any other file — so a bot restart silently forgets every cwd a user has set for a channel or thread, and users have to re-run `cwd /path/to/project` after every deploy; this is worth knowing before "fixing" what looks like an intermittent cwd bug that's actually just "the bot restarted."
+- (BACKFILL-slackbot-06) 2026-07-06 (claw-3t2q item 4, commit d919df48): the two Slack app.action handlers for 'approve_tool' and 'deny_tool' — interactive-button click handlers that would ack(), resolve a pending approval on a module-level permissionServer, and post an ephemeral confirmation — have been deleted from setupEventHandlers, along with the top-of-file 'import { permissionServer } from ./permission-mcp-server'. The audit that removed them established they were listeners for events that could never fire: nothing in claude-handler.ts ever configures a permissionPromptToolName, so the SDK never emits the tool-use permission request these buttons were built to answer, and permission-mcp-server.ts's corresponding sender half was equally dead. A future reader will not find approve_tool/deny_tool registrations anywhere in this file anymore, nor the permission-mcp-server module itself (deleted in full) — if interactive tool-approval is wanted in the future it needs to be built and wired end-to-end from scratch, not resurrected from deleted code. The 'slackContext' object built just before the streamQuery call (channel/threadTs/user) is unchanged in behavior; only its adjacent comment was corrected to describe its real purpose (see the paired note in claude-handler.md's enrichment draft) — it feeds channel-specific system-prompt protocols, not permissions. Carried forward from before this remediation and still true: the webterm-routing check near the top of handleMessage explicitly excludes messages with files and explicitly excludes cwd/mcp bot-level commands, because an earlier version of WEBTERM_ROUTE_ALL=1 swallowed those commands into the interactive Claude session instead of handling them as bot commands — a real production bug that predates this audit window. Unrelated finding surfaced while auditing this remediation: src/permission-server-start.js (a plain launcher script, require('./permission-mcp-server.ts')) was left behind by the same permission-flow removal and now points at a file that no longer exists; nothing in package.json's scripts or src/index.ts invokes it, so it is dead weight rather than a live bug, but a future reader grepping 'permission' in this codebase should not assume it still does anything.
 
 # Citations
 [1] BACKFILL-slackbot-01 evidence: /Users/dustincheng/projects/claudeclaw/docs/specs/asbuilt-living-kb/evidence/slackbot01-evidence.yml
+[2] BACKFILL-slackbot-06 evidence: /Users/dustincheng/projects/claudeclaw/docs/specs/asbuilt-living-kb/evidence/slackbot06-evidence.yml

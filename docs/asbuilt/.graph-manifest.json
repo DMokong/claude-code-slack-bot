@@ -4,7 +4,7 @@
     "name": "web-tree-sitter",
     "version": "0.24.5"
   },
-  "target_commit": "74de1b755aedec97072f13dae5a0f9db2aaf5823",
+  "target_commit": "d919df48ca705f7efd507bde3ed0c1bc0211b152",
   "symbols": [
     {
       "id": "scripts/healthcheck-webterm-claude.ts#SseHandle",
@@ -2630,9 +2630,9 @@
       "file": "src/webterm-runtime-handler.ts",
       "span": [
         161,
-        1116
+        1115
       ],
-      "content_hash": "6cde17e9b4be8bb2edcea59f1db3cea78235a35125d68d23b76b85011c44a140",
+      "content_hash": "4fc5575308df2b49dc54e0f25053512cca76f4922b9fc758c01e485ca76e68b6",
       "exported": true
     },
     {
@@ -2640,8 +2640,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1113,
-        1115
+        1112,
+        1114
       ],
       "content_hash": "c80ff092a6c6eb540793149e8d2b03532920a7af4c3ce5027e559c6d4f7c4b88",
       "exported": true
@@ -2938,9 +2938,9 @@
       "file": "src/webterm-runtime-handler.ts",
       "span": [
         1078,
-        1110
+        1109
       ],
-      "content_hash": "603c1875f8e9c1315f25a9bdfc32bf59d45b12cd8e252994c8300c12fc0216bf",
+      "content_hash": "2836ae249097d229af8a51e6a450f02b781a79a943f7f0709080c985f13a795b",
       "exported": true
     },
     {
@@ -3047,8 +3047,8 @@
       "kind": "function",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1129,
-        1133
+        1128,
+        1132
       ],
       "content_hash": "5c3ba3eddcfff425f0b6febaec331180fc3573ceefe6a1f30fdfd446e320f587",
       "exported": true
@@ -3069,8 +3069,8 @@
       "kind": "function",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1120,
-        1122
+        1119,
+        1121
       ],
       "content_hash": "3509a2680de73a71150d234f81bf6038afc1cd57d6819dd99609205ccd441d1c",
       "exported": true
@@ -3080,8 +3080,8 @@
       "kind": "function",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1142,
-        1144
+        1141,
+        1143
       ],
       "content_hash": "efc4dd325f33bd7ada0aa0955b7d8bdc96b39eafc98820ce9c412b19bf93aeed",
       "exported": false
@@ -3102,8 +3102,8 @@
       "kind": "function",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1138,
-        1140
+        1137,
+        1139
       ],
       "content_hash": "a1dfbbcf236b2e4e60222863a713e0aa0fbbf081a269ee9dae2822d71e9f98e7",
       "exported": true

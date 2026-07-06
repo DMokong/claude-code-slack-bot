@@ -38,3 +38,9 @@
 * **Refresh**: 1 regenerated, 0 new, 1 stale.
 * **Refresh**: 4 regenerated, 1 new, 2 stale.
 * **Refresh**: 2 regenerated, 0 new, 4 stale.
+* **Fold**: BACKFILL-slackbot-06 enriched [src/claude-handler.ts](/src/claude-handler.md) (accuracy-audited).
+* **Fold**: BACKFILL-slackbot-06 enriched [src/file-handler.ts](/src/file-handler.md) (accuracy-audited).
+* **Fold**: BACKFILL-slackbot-06 enriched [src/file-handler.test.ts](/src/file-handler.test.md) (accuracy-audited).
+* **Fold**: BACKFILL-slackbot-06 enriched [src/slack-handler.ts](/src/slack-handler.md) (accuracy-audited).
+* **Fold**: BACKFILL-slackbot-06 enriched [src/webterm-runtime-handler.ts](/src/webterm-runtime-handler.md) (accuracy-audited).
+* **Refresh**: 1 regenerated, 0 new, 2 stale.

@@ -583,9 +583,9 @@ export class WebtermRuntimeHandler {
   }
 
   // Returns the relay transcript: viewport, or scrollback+viewport when the
-  // user echo scrolled off the 40-row viewport (claw-fcd9). Mirrors
-  // fetchAndExtract's recovery but returns the TEXT so the caller can both
-  // extractSegments and isGridIdle from one fetch.
+  // user echo scrolled off the 40-row viewport (claw-fcd9): prepend scrollback
+  // and return the TEXT so the caller can both extractSegments and isGridIdle
+  // from one fetch.
   private async fetchGridForRelay(
     sessionId: string,
     userText: string,
@@ -1082,8 +1082,7 @@ export class WebtermRuntimeHandler {
     }
     // Drain in-flight turns before tearing down (claw-wb4a). Mark each session
     // dead FIRST so a turn blocked in waitForPromptReady throws and posts its
-    // warning (or, if it already has content, awaitRenderSettled exits and it
-    // delivers what it has) — then await those turns within a bounded window so
+    // warning — then await those turns within a bounded window so
     // their Slack writes complete. Setting alive=false is purely the local
     // handler's view; it does NOT kill the webterm session, so claw-usdo title
     // adoption after restart is unaffected.

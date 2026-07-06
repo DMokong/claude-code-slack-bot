@@ -25,7 +25,7 @@ explains:
   - scripts/healthcheck-webterm-claude.ts#waitForPromptReady
 stale: false
 stale_reason: ""
-graph_hash: 8a0d575a40873cd07242dedf282b03d07a103f46e0d9f41720eeb5c6f031704a
+graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 ---
 
 # Structure
