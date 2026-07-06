@@ -22,7 +22,7 @@ explains:
   - src/todo-manager.ts#TodoManager.updateTodos
 stale: false
 stale_reason: ""
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -45,17 +45,7 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 | `TodoManager.updateTodos` | method | 14-23 | yes |
 
 ## Calls out
-- `TodoManager.cleanupSession` → [Logger.debug](/src/logger.md)
 - `TodoManager.formatTodoList` → `TodoManager.getPriorityIcon` (same file)
-- `TodoManager.updateTodos` → [Logger.debug](/src/logger.md)
-
-## Called by
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleTodoUpdate` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleTodoUpdate` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleTodoUpdate` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleTodoUpdate` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleTodoUpdate` in [src/slack-handler.ts](/src/slack-handler.md)
 
 # Explanation
 A per-session, in-memory mirror of Claude Code's `TodoWrite` tool output, whose only purpose is rendering and incrementally updating a Slack message that shows the bot's current task list — it has no bearing on actual task execution, which claude itself drives. This exists because `TodoWrite` calls happen frequently during a single agentic turn, and posting a fresh Slack message on every call would be noisy; this module is the noise-reduction layer.

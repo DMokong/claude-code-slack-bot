@@ -44,3 +44,4 @@
 * **Fold**: BACKFILL-slackbot-06 enriched [src/slack-handler.ts](/src/slack-handler.md) (accuracy-audited).
 * **Fold**: BACKFILL-slackbot-06 enriched [src/webterm-runtime-handler.ts](/src/webterm-runtime-handler.md) (accuracy-audited).
 * **Refresh**: 1 regenerated, 0 new, 2 stale.
+* **Refresh**: 19 regenerated, 0 new, 2 stale.

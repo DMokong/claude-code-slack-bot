@@ -28,7 +28,7 @@ explains:
   - src/mcp-manager.ts#McpStdioServerConfig
 stale: false
 stale_reason: ""
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -62,19 +62,8 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 - `McpManager.formatMcpInfo` → `McpManager.loadConfiguration` (same file)
 - `McpManager.getDefaultAllowedTools` → `McpManager.loadConfiguration` (same file)
 - `McpManager.getServerConfiguration` → `McpManager.loadConfiguration` (same file)
-- `McpManager.loadConfiguration` → [Logger.error](/src/logger.md)
-- `McpManager.loadConfiguration` → [Logger.info](/src/logger.md)
 - `McpManager.loadConfiguration` → `McpManager.validateServerConfig` (same file)
-- `McpManager.loadConfiguration` → [Logger.warn](/src/logger.md)
 - `McpManager.reloadConfiguration` → `McpManager.loadConfiguration` (same file)
-- `McpManager.validateServerConfig` → [Logger.warn](/src/logger.md)
-
-## Called by
-- `ClaudeHandler.streamQuery` in [src/claude-handler.ts](/src/claude-handler.md)
-- `ClaudeHandler.streamQuery` in [src/claude-handler.ts](/src/claude-handler.md)
-- `start` in [src/index.ts](/src/index.ts.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
 
 # Explanation
 McpManager owns a JSON config file (default `./mcp-servers.json`,

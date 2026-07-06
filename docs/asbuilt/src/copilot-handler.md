@@ -17,7 +17,7 @@ explains:
   - src/copilot-handler.ts#extractTextFromLines
 stale: false
 stale_reason: ""
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -35,11 +35,9 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 
 ## Calls out
 - `CopilotHandler.query` → `extractTextFromLines` (same file)
-- `CopilotHandler.query` → [kill](/scripts/run-via-webterm.md)
 
 ## Called by
 - `ClaudeHandler._executeQuery` in [src/claude-handler.ts](/src/claude-handler.md)
-- `SlackHandler.sendCopilotResponse` in [src/slack-handler.ts](/src/slack-handler.md)
 
 # Explanation
 This module isolates all interaction with the GitHub Copilot CLI behind a small Promise-returning API so the rest of the bot (slack-handler.ts, claude-handler.ts's rate-limit fallback) doesn't need to know anything about spawning processes or Copilot's JSONL wire format. It's the "other engine" half of the Claude/Copilot routing decision made in engine-router.ts.

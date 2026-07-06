@@ -19,7 +19,7 @@ explains:
   - src/slack-streamer.ts#SlackStreamManager.stop
 stale: false
 stale_reason: ""
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -42,16 +42,7 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 
 ## Calls out
 - `SlackStreamManager.append` → `SlackStreamManager.append` (same file)
-- `SlackStreamManager.append` → [Logger.debug](/src/logger.md)
-- `SlackStreamManager.append` → [Logger.warn](/src/logger.md)
-- `SlackStreamManager.stop` → [Logger.debug](/src/logger.md)
 - `SlackStreamManager.stop` → `SlackStreamManager.stop` (same file)
-
-## Called by
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
 
 # Explanation
 This module exists because Slack's native streaming API (chatStream) is not guaranteed to always succeed mid-response, and a partially-streamed message with no fallback would just look broken to the user. SlackStreamManager is a small stateful wrapper used once per Claude response inside slack-handler.ts's handleMessage loop to make streaming best-effort with a correctness-preserving fallback.

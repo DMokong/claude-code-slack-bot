@@ -22,7 +22,7 @@ explains:
   - src/thread-state-manager.ts#setEngine
 stale: false
 stale_reason: ""
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -59,19 +59,13 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 - `getClaudeSessionId` → `loadState` (same file)
 - `getThreadEntry` → `loadState` (same file)
 - `hasExplicitThreadState` → `loadState` (same file)
-- `loadState` → [Logger.error](/src/logger.md)
 - `loadState` → `getStatePath` (same file)
-- `loadState` → [Logger.info](/src/logger.md)
 - `loadState` → `migrateRawEntries` (same file)
 - `loadState` → `sanitizeCwd` (same file)
 - `loadState` → `saveState` (same file)
-- `migrateRawEntries` → [Logger.debug](/src/logger.md)
-- `saveState` → [Logger.debug](/src/logger.md)
 - `saveState` → `getStatePath` (same file)
-- `setClaudeSessionId` → [Logger.debug](/src/logger.md)
 - `setClaudeSessionId` → `loadState` (same file)
 - `setClaudeSessionId` → `saveState` (same file)
-- `setEngine` → [Logger.debug](/src/logger.md)
 - `setEngine` → `loadState` (same file)
 - `setEngine` → `saveState` (same file)
 

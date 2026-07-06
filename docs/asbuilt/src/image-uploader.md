@@ -21,7 +21,7 @@ explains:
   - src/image-uploader.ts#ImageUploader.uploadImages
 stale: false
 stale_reason: ""
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -42,16 +42,7 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 
 ## Calls out
 - `ImageUploader.extractImagePaths` → `ImageUploader.resolveImagePath` (same file)
-- `ImageUploader.uploadImage` → [Logger.error](/src/logger.md)
-- `ImageUploader.uploadImage` → [Logger.info](/src/logger.md)
-- `ImageUploader.uploadImage` → [Logger.warn](/src/logger.md)
 - `ImageUploader.uploadImages` → `ImageUploader.uploadImage` (same file)
-- `ImageUploader.uploadImages` → [Logger.warn](/src/logger.md)
-
-## Called by
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
 
 # Explanation
 ImageUploader is the live mechanism for getting images that Claude (or

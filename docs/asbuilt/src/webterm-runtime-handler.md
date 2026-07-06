@@ -35,10 +35,9 @@ explains:
   - src/webterm-runtime-handler.ts#decodeSlackEntities
   - src/webterm-runtime-handler.ts#shellSingleQuote
   - src/webterm-runtime-handler.ts#stripTransportSuffix
-stale: true
-stale_reason: "changed: src/webterm-runtime-handler.ts#WebtermRuntimeHandler,
-  src/webterm-runtime-handler.ts#WebtermRuntimeHandler.shutdown"
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+stale: false
+stale_reason: ""
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -108,40 +107,29 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 - `WebtermRuntimeHandler.adoptOrCreateSession` → `WebtermRuntimeHandler.tryAdoptSession` (same file)
 - `WebtermRuntimeHandler.buildBootCmd` → `WebtermRuntimeHandler.buildBootCtx` (same file)
 - `WebtermRuntimeHandler.buildBootCmd` → `shellSingleQuote` (same file)
-- `WebtermRuntimeHandler.checkInputResponse` → [Logger.warn](/src/logger.md)
 - `WebtermRuntimeHandler.completeBootHandshake` → `WebtermRuntimeHandler.fetchGridText` (same file)
-- `WebtermRuntimeHandler.completeBootHandshake` → [Logger.info](/src/logger.md)
 - `WebtermRuntimeHandler.completeBootHandshake` → `WebtermRuntimeHandler.sendKeys` (same file)
 - `WebtermRuntimeHandler.completeBootHandshake` → `WebtermRuntimeHandler.waitForPromptReady` (same file)
-- `WebtermRuntimeHandler.constructor` → [Logger.error](/src/logger.md)
 - `WebtermRuntimeHandler.constructor` → `WebtermRuntimeHandler.reapIdleSessions` (same file)
 - `WebtermRuntimeHandler.createSession` → `WebtermRuntimeHandler.buildBootCmd` (same file)
 - `WebtermRuntimeHandler.createSession` → `WebtermRuntimeHandler.buildBootCtx` (same file)
 - `WebtermRuntimeHandler.createSession` → `WebtermRuntimeHandler.completeBootHandshake` (same file)
-- `WebtermRuntimeHandler.createSession` → [Logger.info](/src/logger.md)
 - `WebtermRuntimeHandler.createSession` → `WebtermRuntimeHandler.killWebtermSession` (same file)
 - `WebtermRuntimeHandler.createSession` → `WebtermRuntimeHandler.runSseListener` (same file)
 - `WebtermRuntimeHandler.createSession` → `WebtermRuntimeHandler.sendInput` (same file)
-- `WebtermRuntimeHandler.deliverReply` → [Logger.error](/src/logger.md)
 - `WebtermRuntimeHandler.deliverReply` → `WebtermRuntimeHandler.postReply` (same file)
 - `WebtermRuntimeHandler.fetchGridForRelay` → [extractSegments](/src/webterm-claude-extractor.md)
 - `WebtermRuntimeHandler.fetchGridForRelay` → `WebtermRuntimeHandler.fetchGridMeta` (same file)
 - `WebtermRuntimeHandler.fetchGridForRelay` → `WebtermRuntimeHandler.fetchScrollback` (same file)
 - `WebtermRuntimeHandler.fetchGridText` → `WebtermRuntimeHandler.fetchGridMeta` (same file)
 - `WebtermRuntimeHandler.handleMessage` → `decodeSlackEntities` (same file)
-- `WebtermRuntimeHandler.handleMessage` → [Logger.error](/src/logger.md)
 - `WebtermRuntimeHandler.handleMessage` → `WebtermRuntimeHandler.isRunningClaude` (same file)
 - `WebtermRuntimeHandler.handleMessage` → `WebtermRuntimeHandler.killWebtermSession` (same file)
 - `WebtermRuntimeHandler.handleMessage` → `WebtermRuntimeHandler.postReply` (same file)
 - `WebtermRuntimeHandler.handleMessage` → `WebtermRuntimeHandler.resolveSession` (same file)
 - `WebtermRuntimeHandler.handleMessage` → `WebtermRuntimeHandler.takeTurn` (same file)
 - `WebtermRuntimeHandler.handleMessage` → `WebtermRuntimeHandler.threadKey` (same file)
-- `WebtermRuntimeHandler.handleMessage` → [Logger.warn](/src/logger.md)
 - `WebtermRuntimeHandler.isRunningClaude` → `WebtermRuntimeHandler.fetchGridText` (same file)
-- `WebtermRuntimeHandler.postFreshStreamMessage` → [Logger.error](/src/logger.md)
-- `WebtermRuntimeHandler.postReply` → [Logger.error](/src/logger.md)
-- `WebtermRuntimeHandler.postStatusPlaceholder` → [Logger.error](/src/logger.md)
-- `WebtermRuntimeHandler.reapIdleSessions` → [Logger.info](/src/logger.md)
 - `WebtermRuntimeHandler.reapIdleSessions` → `WebtermRuntimeHandler.killWebtermSession` (same file)
 - `WebtermRuntimeHandler.relayNewSegments` → `deliver` (same file)
 - `WebtermRuntimeHandler.relayNewSegments` → [extractSegments](/src/webterm-claude-extractor.md)
@@ -150,12 +138,9 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 - `WebtermRuntimeHandler.relayNewSegments` → `stopStatus` (same file)
 - `WebtermRuntimeHandler.relayNewSegments` → `WebtermRuntimeHandler.updateStreamMessage` (same file)
 - `WebtermRuntimeHandler.resolveSession` → `WebtermRuntimeHandler.adoptOrCreateSession` (same file)
-- `WebtermRuntimeHandler.runSseListener` → [Logger.error](/src/logger.md)
-- `WebtermRuntimeHandler.runSseListener` → [Logger.info](/src/logger.md)
 - `WebtermRuntimeHandler.runStatusLoop` → [extractActivity](/src/webterm-claude-extractor.md)
 - `WebtermRuntimeHandler.runStatusLoop` → `WebtermRuntimeHandler.fetchGridText` (same file)
 - `WebtermRuntimeHandler.runStatusLoop` → `sleep` (same file)
-- `WebtermRuntimeHandler.runStatusLoop` → [Logger.warn](/src/logger.md)
 - `WebtermRuntimeHandler.sendInput` → `WebtermRuntimeHandler.checkInputResponse` (same file)
 - `WebtermRuntimeHandler.sendInput` → `WebtermRuntimeHandler.sendKeys` (same file)
 - `WebtermRuntimeHandler.sendInput` → `sleep` (same file)
@@ -164,7 +149,6 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 - `WebtermRuntimeHandler.shutdown` → `sleep` (same file)
 - `WebtermRuntimeHandler.takeTurn` → `deliver` (same file)
 - `WebtermRuntimeHandler.takeTurn` → `WebtermRuntimeHandler.deliverReply` (same file)
-- `WebtermRuntimeHandler.takeTurn` → [Logger.error](/src/logger.md)
 - `WebtermRuntimeHandler.takeTurn` → [extractTurn](/src/webterm-claude-extractor.md)
 - `WebtermRuntimeHandler.takeTurn` → `WebtermRuntimeHandler.fetchExitCause` (same file)
 - `WebtermRuntimeHandler.takeTurn` → `WebtermRuntimeHandler.fetchGridForRelay` (same file)
@@ -178,11 +162,8 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 - `WebtermRuntimeHandler.takeTurn` → `WebtermRuntimeHandler.streamEnabled` (same file)
 - `WebtermRuntimeHandler.takeTurn` → `WebtermRuntimeHandler.waitForTurnSignal` (same file)
 - `WebtermRuntimeHandler.tryAdoptSession` → `WebtermRuntimeHandler.fetchGridText` (same file)
-- `WebtermRuntimeHandler.tryAdoptSession` → [Logger.info](/src/logger.md)
 - `WebtermRuntimeHandler.tryAdoptSession` → `WebtermRuntimeHandler.killWebtermSession` (same file)
 - `WebtermRuntimeHandler.tryAdoptSession` → `WebtermRuntimeHandler.runSseListener` (same file)
-- `WebtermRuntimeHandler.tryAdoptSession` → [Logger.warn](/src/logger.md)
-- `WebtermRuntimeHandler.updateStreamMessage` → [Logger.warn](/src/logger.md)
 - `WebtermRuntimeHandler.waitForPromptReady` → `sleep` (same file)
 - `WebtermRuntimeHandler.waitForTurnSignal` → `sleep` (same file)
 - `decodeSlackEntities` → `stripTransportSuffix` (same file)

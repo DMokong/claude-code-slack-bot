@@ -16,7 +16,7 @@ explains:
   - src/index.ts#start
 stale: false
 stale_reason: ""
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -28,14 +28,8 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 | `start` | function | 16-95 | no |
 
 ## Calls out
-- `gracefulShutdown` → [Logger.error](/src/logger.md)
-- `gracefulShutdown` → [Logger.info](/src/logger.md)
 - `start` → [ensureSingleInstance](/src/single-instance.md)
-- `start` → [Logger.error](/src/logger.md)
 - `start` → `gracefulShutdown` (same file)
-- `start` → [Logger.info](/src/logger.md)
-- `start` → [McpManager.loadConfiguration](/src/mcp-manager.md)
-- `start` → [SlackHandler.setupEventHandlers](/src/slack-handler.md)
 - `start` → `start` (same file)
 - `start` → [validateConfig](/src/config.md)
 

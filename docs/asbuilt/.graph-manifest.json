@@ -4,7 +4,7 @@
     "name": "web-tree-sitter",
     "version": "0.24.5"
   },
-  "target_commit": "d919df48ca705f7efd507bde3ed0c1bc0211b152",
+  "target_commit": "11224104d9257e181886ffd3fd3d38081b664bc7",
   "symbols": [
     {
       "id": "scripts/healthcheck-webterm-claude.ts#SseHandle",
@@ -3941,7 +3941,7 @@
     {
       "from": "src/claude-handler.ts#ClaudeHandler._executeQuery",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/claude-handler.ts#ClaudeHandler._executeQuery",
@@ -3971,7 +3971,7 @@
     {
       "from": "src/claude-handler.ts#ClaudeHandler.cleanupInactiveSessions",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/claude-handler.ts#ClaudeHandler.cleanupInactiveSessions",
@@ -3986,7 +3986,7 @@
     {
       "from": "src/claude-handler.ts#ClaudeHandler.createSession",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/claude-handler.ts#ClaudeHandler.createSession",
@@ -4046,7 +4046,7 @@
     {
       "from": "src/claude-handler.ts#ClaudeHandler.resolveSessionId",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/claude-handler.ts#ClaudeHandler.streamQuery",
@@ -4061,7 +4061,7 @@
     {
       "from": "src/claude-handler.ts#ClaudeHandler.streamQuery",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/claude-handler.ts#ClaudeHandler.streamQuery",
@@ -4071,17 +4071,17 @@
     {
       "from": "src/claude-handler.ts#ClaudeHandler.streamQuery",
       "toName": "getDefaultAllowedTools",
-      "resolved": "src/mcp-manager.ts#McpManager.getDefaultAllowedTools"
+      "resolved": null
     },
     {
       "from": "src/claude-handler.ts#ClaudeHandler.streamQuery",
       "toName": "getServerConfiguration",
-      "resolved": "src/mcp-manager.ts#McpManager.getServerConfiguration"
+      "resolved": null
     },
     {
       "from": "src/claude-handler.ts#ClaudeHandler.streamQuery",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/claude-handler.ts#ClaudeHandler.streamQuery",
@@ -4101,7 +4101,7 @@
     {
       "from": "src/claude-handler.ts#ClaudeHandler.streamQuery",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/config.ts#loadChannelMap",
@@ -4121,7 +4121,7 @@
     {
       "from": "src/config.ts#loadChannelMap",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/config.ts#parseChannelFileRoutes",
@@ -4201,7 +4201,7 @@
     {
       "from": "src/copilot-handler.ts#CopilotHandler.query",
       "toName": "kill",
-      "resolved": "scripts/run-via-webterm.ts#kill"
+      "resolved": null
     },
     {
       "from": "src/copilot-handler.ts#CopilotHandler.query",
@@ -4306,7 +4306,7 @@
     {
       "from": "src/engine-router.ts#getChannelDefault",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/engine-router.ts#resolveEngine",
@@ -4326,7 +4326,7 @@
     {
       "from": "src/file-handler.ts#FileHandler.cleanupTempFiles",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/file-handler.ts#FileHandler.cleanupTempFiles",
@@ -4336,7 +4336,7 @@
     {
       "from": "src/file-handler.ts#FileHandler.cleanupTempFiles",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/file-handler.ts#FileHandler.downloadAndProcessFiles",
@@ -4346,12 +4346,12 @@
     {
       "from": "src/file-handler.ts#FileHandler.downloadAndProcessFiles",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/file-handler.ts#FileHandler.downloadAndProcessFiles",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/file-handler.ts#FileHandler.downloadAndProcessFiles",
@@ -4366,12 +4366,12 @@
     {
       "from": "src/file-handler.ts#FileHandler.downloadFile",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/file-handler.ts#FileHandler.downloadFile",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/file-handler.ts#FileHandler.downloadFile",
@@ -4381,7 +4381,7 @@
     {
       "from": "src/file-handler.ts#FileHandler.downloadFile",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/file-handler.ts#FileHandler.downloadFile",
@@ -4416,7 +4416,7 @@
     {
       "from": "src/file-handler.ts#FileHandler.downloadFile",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/file-handler.ts#FileHandler.downloadFile",
@@ -4526,7 +4526,7 @@
     {
       "from": "src/image-uploader.ts#ImageUploader.uploadImage",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/image-uploader.ts#ImageUploader.uploadImage",
@@ -4536,7 +4536,7 @@
     {
       "from": "src/image-uploader.ts#ImageUploader.uploadImage",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/image-uploader.ts#ImageUploader.uploadImage",
@@ -4551,7 +4551,7 @@
     {
       "from": "src/image-uploader.ts#ImageUploader.uploadImage",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/image-uploader.ts#ImageUploader.uploadImages",
@@ -4566,12 +4566,12 @@
     {
       "from": "src/image-uploader.ts#ImageUploader.uploadImages",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/index.ts#gracefulShutdown",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/index.ts#gracefulShutdown",
@@ -4581,7 +4581,7 @@
     {
       "from": "src/index.ts#gracefulShutdown",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/index.ts#gracefulShutdown",
@@ -4596,7 +4596,7 @@
     {
       "from": "src/index.ts#start",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/index.ts#start",
@@ -4611,7 +4611,7 @@
     {
       "from": "src/index.ts#start",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/index.ts#start",
@@ -4621,7 +4621,7 @@
     {
       "from": "src/index.ts#start",
       "toName": "loadConfiguration",
-      "resolved": "src/mcp-manager.ts#McpManager.loadConfiguration"
+      "resolved": null
     },
     {
       "from": "src/index.ts#start",
@@ -4631,7 +4631,7 @@
     {
       "from": "src/index.ts#start",
       "toName": "setupEventHandlers",
-      "resolved": "src/slack-handler.ts#SlackHandler.setupEventHandlers"
+      "resolved": null
     },
     {
       "from": "src/index.ts#start",
@@ -4686,7 +4686,7 @@
     {
       "from": "src/logger.ts#Logger.debug",
       "toName": "log",
-      "resolved": "scripts/run-via-webterm.ts#log"
+      "resolved": null
     },
     {
       "from": "src/logger.ts#Logger.error",
@@ -4726,7 +4726,7 @@
     {
       "from": "src/logger.ts#Logger.info",
       "toName": "log",
-      "resolved": "scripts/run-via-webterm.ts#log"
+      "resolved": null
     },
     {
       "from": "src/logger.ts#Logger.warn",
@@ -4861,7 +4861,7 @@
     {
       "from": "src/mcp-manager.ts#McpManager.loadConfiguration",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/mcp-manager.ts#McpManager.loadConfiguration",
@@ -4871,7 +4871,7 @@
     {
       "from": "src/mcp-manager.ts#McpManager.loadConfiguration",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/mcp-manager.ts#McpManager.loadConfiguration",
@@ -4896,7 +4896,7 @@
     {
       "from": "src/mcp-manager.ts#McpManager.loadConfiguration",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/mcp-manager.ts#McpManager.reloadConfiguration",
@@ -4906,7 +4906,7 @@
     {
       "from": "src/mcp-manager.ts#McpManager.validateServerConfig",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/session-id.ts#threadToSessionId",
@@ -4916,7 +4916,7 @@
     {
       "from": "src/single-instance.test.ts#isAlive",
       "toName": "kill",
-      "resolved": "scripts/run-via-webterm.ts#kill"
+      "resolved": null
     },
     {
       "from": "src/single-instance.test.ts#spawnFakeBot",
@@ -5031,7 +5031,7 @@
     {
       "from": "src/single-instance.ts#ensureSingleInstance",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/single-instance.ts#ensureSingleInstance",
@@ -5051,7 +5051,7 @@
     {
       "from": "src/single-instance.ts#ensureSingleInstance",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/single-instance.ts#ensureSingleInstance",
@@ -5131,7 +5131,7 @@
     {
       "from": "src/single-instance.ts#findOtherInstances",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/single-instance.ts#getAncestry",
@@ -5186,7 +5186,7 @@
     {
       "from": "src/single-instance.ts#killInstance",
       "toName": "kill",
-      "resolved": "scripts/run-via-webterm.ts#kill"
+      "resolved": null
     },
     {
       "from": "src/single-instance.ts#killInstance",
@@ -5196,7 +5196,7 @@
     {
       "from": "src/single-instance.ts#killInstance",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/single-instance.ts#remove",
@@ -5271,12 +5271,12 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.constructor",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.createNewTodoMessage",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.createNewTodoMessage",
@@ -5361,7 +5361,7 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.getBotUserId",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.getBotUserId",
@@ -5396,12 +5396,12 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleChannelJoin",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleChannelJoin",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleChannelJoin",
@@ -5416,22 +5416,22 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "append",
-      "resolved": "src/slack-streamer.ts#SlackStreamManager.append"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "cleanupSession",
-      "resolved": "src/todo-manager.ts#TodoManager.cleanupSession"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "cleanupTempFiles",
-      "resolved": "src/file-handler.ts#FileHandler.cleanupTempFiles"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "consumeFallbackText",
-      "resolved": "src/slack-streamer.ts#SlackStreamManager.consumeFallbackText"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5441,7 +5441,7 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5451,17 +5451,17 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "downloadAndProcessFiles",
-      "resolved": "src/file-handler.ts#FileHandler.downloadAndProcessFiles"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "extractImagePaths",
-      "resolved": "src/image-uploader.ts#ImageUploader.extractImagePaths"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5481,17 +5481,17 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "formatDirectoryMessage",
-      "resolved": "src/working-directory-manager.ts#WorkingDirectoryManager.formatDirectoryMessage"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "formatFilePrompt",
-      "resolved": "src/file-handler.ts#FileHandler.formatFilePrompt"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "formatMcpInfo",
-      "resolved": "src/mcp-manager.ts#McpManager.formatMcpInfo"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5516,12 +5516,12 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "getSession",
-      "resolved": "src/claude-handler.ts#ClaudeHandler.getSession"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "getSessionKey",
-      "resolved": "src/claude-handler.ts#ClaudeHandler.getSessionKey"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5536,7 +5536,7 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "getWorkingDirectory",
-      "resolved": "src/working-directory-manager.ts#WorkingDirectoryManager.getWorkingDirectory"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5551,7 +5551,7 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "hasChannelWorkingDirectory",
-      "resolved": "src/working-directory-manager.ts#WorkingDirectoryManager.hasChannelWorkingDirectory"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5561,7 +5561,7 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5571,12 +5571,12 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "isGetCommand",
-      "resolved": "src/working-directory-manager.ts#WorkingDirectoryManager.isGetCommand"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "isImagePath",
-      "resolved": "src/image-uploader.ts#ImageUploader.isImagePath"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5611,7 +5611,7 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "parseSetCommand",
-      "resolved": "src/working-directory-manager.ts#WorkingDirectoryManager.parseSetCommand"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5621,12 +5621,12 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "reloadConfiguration",
-      "resolved": "src/mcp-manager.ts#McpManager.reloadConfiguration"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "reset",
-      "resolved": "src/slack-streamer.ts#SlackStreamManager.reset"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5666,7 +5666,7 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "setWorkingDirectory",
-      "resolved": "src/working-directory-manager.ts#WorkingDirectoryManager.setWorkingDirectory"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5681,12 +5681,12 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "stop",
-      "resolved": "src/slack-streamer.ts#SlackStreamManager.stop"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "streamQuery",
-      "resolved": "src/claude-handler.ts#ClaudeHandler.streamQuery"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5711,12 +5711,12 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "uploadImages",
-      "resolved": "src/image-uploader.ts#ImageUploader.uploadImages"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleMessage",
@@ -5736,12 +5736,12 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleTodoUpdate",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleTodoUpdate",
       "toName": "formatTodoList",
-      "resolved": "src/todo-manager.ts#TodoManager.formatTodoList"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleTodoUpdate",
@@ -5751,17 +5751,17 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleTodoUpdate",
       "toName": "getStatusChange",
-      "resolved": "src/todo-manager.ts#TodoManager.getStatusChange"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleTodoUpdate",
       "toName": "getTodos",
-      "resolved": "src/todo-manager.ts#TodoManager.getTodos"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleTodoUpdate",
       "toName": "hasSignificantChange",
-      "resolved": "src/todo-manager.ts#TodoManager.hasSignificantChange"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleTodoUpdate",
@@ -5781,12 +5781,12 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.handleTodoUpdate",
       "toName": "updateTodos",
-      "resolved": "src/todo-manager.ts#TodoManager.updateTodos"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.handleTodoUpdate",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.isMcpInfoCommand",
@@ -5811,12 +5811,12 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.sendCopilotResponse",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.sendCopilotResponse",
       "toName": "query",
-      "resolved": "src/copilot-handler.ts#CopilotHandler.query"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.sendCopilotResponse",
@@ -5841,7 +5841,7 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.setThreadStatus",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.setThreadStatus",
@@ -5851,17 +5851,17 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.setThreadStatus",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.setupEventHandlers",
       "toName": "cleanupInactiveSessions",
-      "resolved": "src/claude-handler.ts#ClaudeHandler.cleanupInactiveSessions"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.setupEventHandlers",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.setupEventHandlers",
@@ -5891,7 +5891,7 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.setupEventHandlers",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.setupEventHandlers",
@@ -5946,7 +5946,7 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.updateMessageReaction",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.updateMessageReaction",
@@ -5961,7 +5961,7 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.updateMessageReaction",
       "toName": "remove",
-      "resolved": "src/single-instance.ts#remove"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.updateMessageReaction",
@@ -5971,7 +5971,7 @@
     {
       "from": "src/slack-handler.ts#SlackHandler.updateMessageReaction",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/slack-handler.ts#SlackHandler.updateTaskProgressReaction",
@@ -6066,12 +6066,12 @@
     {
       "from": "src/slack-streamer.ts#SlackStreamManager.append",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/slack-streamer.ts#SlackStreamManager.append",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/slack-streamer.ts#SlackStreamManager.stop",
@@ -6081,7 +6081,7 @@
     {
       "from": "src/slack-streamer.ts#SlackStreamManager.stop",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/slack-streamer.ts#SlackStreamManager.stop",
@@ -6141,7 +6141,7 @@
     {
       "from": "src/thread-lock.ts#withThreadLock",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/thread-lock.ts#withThreadLock",
@@ -6206,7 +6206,7 @@
     {
       "from": "src/thread-state-manager.ts#loadState",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/thread-state-manager.ts#loadState",
@@ -6231,7 +6231,7 @@
     {
       "from": "src/thread-state-manager.ts#loadState",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/thread-state-manager.ts#loadState",
@@ -6271,7 +6271,7 @@
     {
       "from": "src/thread-state-manager.ts#migrateRawEntries",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/thread-state-manager.ts#migrateRawEntries",
@@ -6286,7 +6286,7 @@
     {
       "from": "src/thread-state-manager.ts#saveState",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/thread-state-manager.ts#saveState",
@@ -6326,7 +6326,7 @@
     {
       "from": "src/thread-state-manager.ts#setClaudeSessionId",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/thread-state-manager.ts#setClaudeSessionId",
@@ -6341,7 +6341,7 @@
     {
       "from": "src/thread-state-manager.ts#setEngine",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/thread-state-manager.ts#setEngine",
@@ -6356,7 +6356,7 @@
     {
       "from": "src/todo-manager.ts#TodoManager.cleanupSession",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/todo-manager.ts#TodoManager.cleanupSession",
@@ -6406,7 +6406,7 @@
     {
       "from": "src/todo-manager.ts#TodoManager.updateTodos",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/todo-manager.ts#TodoManager.updateTodos",
@@ -7316,7 +7316,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.checkInputResponse",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.completeBootHandshake",
@@ -7326,7 +7326,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.completeBootHandshake",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.completeBootHandshake",
@@ -7371,7 +7371,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.constructor",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.constructor",
@@ -7421,7 +7421,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.createSession",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.createSession",
@@ -7466,7 +7466,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.deliverReply",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.deliverReply",
@@ -7581,7 +7581,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.handleMessage",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.handleMessage",
@@ -7626,7 +7626,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.handleMessage",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.isRunningClaude",
@@ -7651,7 +7651,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.postFreshStreamMessage",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.postFreshStreamMessage",
@@ -7666,7 +7666,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.postReply",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.postReply",
@@ -7681,7 +7681,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.postStatusPlaceholder",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.postStatusPlaceholder",
@@ -7716,7 +7716,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.reapIdleSessions",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.reapIdleSessions",
@@ -7826,7 +7826,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.runSseListener",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.runSseListener",
@@ -7836,7 +7836,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.runSseListener",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.runSseListener",
@@ -7891,7 +7891,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.runStatusLoop",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.sendInput",
@@ -8016,7 +8016,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.takeTurn",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.takeTurn",
@@ -8121,7 +8121,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.tryAdoptSession",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.tryAdoptSession",
@@ -8151,7 +8151,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.tryAdoptSession",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.updateStreamMessage",
@@ -8166,7 +8166,7 @@
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.updateStreamMessage",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.waitForPromptReady",
@@ -8271,7 +8271,7 @@
     {
       "from": "src/working-directory-manager.ts#WorkingDirectoryManager.getWorkingDirectory",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/working-directory-manager.ts#WorkingDirectoryManager.getWorkingDirectory",
@@ -8336,12 +8336,12 @@
     {
       "from": "src/working-directory-manager.ts#WorkingDirectoryManager.removeWorkingDirectory",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/working-directory-manager.ts#WorkingDirectoryManager.resolveDirectory",
       "toName": "debug",
-      "resolved": "src/logger.ts#Logger.debug"
+      "resolved": null
     },
     {
       "from": "src/working-directory-manager.ts#WorkingDirectoryManager.resolveDirectory",
@@ -8366,7 +8366,7 @@
     {
       "from": "src/working-directory-manager.ts#WorkingDirectoryManager.setWorkingDirectory",
       "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
+      "resolved": null
     },
     {
       "from": "src/working-directory-manager.ts#WorkingDirectoryManager.setWorkingDirectory",
@@ -8376,7 +8376,7 @@
     {
       "from": "src/working-directory-manager.ts#WorkingDirectoryManager.setWorkingDirectory",
       "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
+      "resolved": null
     },
     {
       "from": "src/working-directory-manager.ts#WorkingDirectoryManager.setWorkingDirectory",
@@ -8406,7 +8406,7 @@
     {
       "from": "src/working-directory-manager.ts#WorkingDirectoryManager.setWorkingDirectory",
       "toName": "warn",
-      "resolved": "src/logger.ts#Logger.warn"
+      "resolved": null
     }
   ]
 }

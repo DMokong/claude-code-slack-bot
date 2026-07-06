@@ -23,7 +23,7 @@ explains:
   - src/working-directory-manager.ts#WorkingDirectoryManager.setWorkingDirectory
 stale: false
 stale_reason: ""
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -50,26 +50,12 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 
 ## Calls out
 - `WorkingDirectoryManager.getChannelWorkingDirectory` → `WorkingDirectoryManager.getConfigKey` (same file)
-- `WorkingDirectoryManager.getWorkingDirectory` → [Logger.debug](/src/logger.md)
 - `WorkingDirectoryManager.getWorkingDirectory` → `WorkingDirectoryManager.getConfigKey` (same file)
 - `WorkingDirectoryManager.getWorkingDirectory` → `WorkingDirectoryManager.resolveDirectory` (same file)
 - `WorkingDirectoryManager.hasChannelWorkingDirectory` → `WorkingDirectoryManager.getChannelWorkingDirectory` (same file)
 - `WorkingDirectoryManager.removeWorkingDirectory` → `WorkingDirectoryManager.getConfigKey` (same file)
-- `WorkingDirectoryManager.removeWorkingDirectory` → [Logger.info](/src/logger.md)
-- `WorkingDirectoryManager.resolveDirectory` → [Logger.debug](/src/logger.md)
-- `WorkingDirectoryManager.setWorkingDirectory` → [Logger.error](/src/logger.md)
 - `WorkingDirectoryManager.setWorkingDirectory` → `WorkingDirectoryManager.getConfigKey` (same file)
-- `WorkingDirectoryManager.setWorkingDirectory` → [Logger.info](/src/logger.md)
 - `WorkingDirectoryManager.setWorkingDirectory` → `WorkingDirectoryManager.resolveDirectory` (same file)
-- `WorkingDirectoryManager.setWorkingDirectory` → [Logger.warn](/src/logger.md)
-
-## Called by
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
 
 # Explanation
 In-memory per-Slack-context configuration of which filesystem directory claude should treat as its working directory, exposed to users via chat commands (`cwd <path>`, `set directory <path>`, bare `cwd`/`cwd?` to read it back). This is what lets different Slack channels or threads point claude at different local projects without any deploy-time configuration change.

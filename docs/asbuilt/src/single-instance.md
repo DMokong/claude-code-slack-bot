@@ -23,7 +23,7 @@ explains:
   - src/single-instance.ts#writeLockFile
 stale: false
 stale_reason: ""
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -51,19 +51,13 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 ## Calls out
 - `ensureSingleInstance` → `findOtherInstances` (same file)
 - `ensureSingleInstance` → `getLockPath` (same file)
-- `ensureSingleInstance` → [Logger.info](/src/logger.md)
 - `ensureSingleInstance` → `killInstance` (same file)
-- `ensureSingleInstance` → [Logger.warn](/src/logger.md)
 - `ensureSingleInstance` → `writeLockFile` (same file)
 - `findOtherInstances` → `getAncestry` (same file)
 - `findOtherInstances` → `getCwd` (same file)
-- `findOtherInstances` → [Logger.warn](/src/logger.md)
-- `killInstance` → [kill](/scripts/run-via-webterm.md)
-- `killInstance` → [Logger.warn](/src/logger.md)
 
 ## Called by
 - `start` in [src/index.ts](/src/index.ts.md)
-- `SlackHandler.updateMessageReaction` in [src/slack-handler.ts](/src/slack-handler.md)
 
 # Explanation
 A startup-time guard against running two copies of this bot against the same Slack app token at once — two live instances would both receive and process the same Slack events (split-brain), corrupting shared state like `thread-state.json`. It combines a live process scan (authoritative) with a PID lock file (diagnostic only), and is invoked exactly once, at the top of `index.ts#start`, before anything else initializes.

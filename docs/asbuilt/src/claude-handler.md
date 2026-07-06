@@ -21,7 +21,7 @@ explains:
   - src/claude-handler.ts#ClaudeHandler.streamQuery
 stale: false
 stale_reason: ""
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -44,30 +44,15 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 | `ClaudeHandler.streamQuery` | method | 72-156 | yes |
 
 ## Calls out
-- `ClaudeHandler._executeQuery` → [Logger.info](/src/logger.md)
 - `ClaudeHandler._executeQuery` → [CopilotHandler.query](/src/copilot-handler.md)
 - `ClaudeHandler._executeQuery` → [setClaudeSessionId](/src/thread-state-manager.md)
-- `ClaudeHandler.cleanupInactiveSessions` → [Logger.info](/src/logger.md)
 - `ClaudeHandler.createSession` → `ClaudeHandler.getSessionKey` (same file)
-- `ClaudeHandler.createSession` → [Logger.info](/src/logger.md)
 - `ClaudeHandler.createSession` → [threadToSessionId](/src/session-id.md)
 - `ClaudeHandler.getSession` → `ClaudeHandler.getSessionKey` (same file)
 - `ClaudeHandler.resolveSessionId` → [getClaudeSessionId](/src/thread-state-manager.md)
 - `ClaudeHandler.resolveSessionId` → `ClaudeHandler.getProjectDir` (same file)
-- `ClaudeHandler.resolveSessionId` → [Logger.warn](/src/logger.md)
 - `ClaudeHandler.streamQuery` → `ClaudeHandler._executeQuery` (same file)
-- `ClaudeHandler.streamQuery` → [Logger.debug](/src/logger.md)
-- `ClaudeHandler.streamQuery` → [McpManager.getDefaultAllowedTools](/src/mcp-manager.md)
-- `ClaudeHandler.streamQuery` → [McpManager.getServerConfiguration](/src/mcp-manager.md)
-- `ClaudeHandler.streamQuery` → [Logger.info](/src/logger.md)
 - `ClaudeHandler.streamQuery` → `ClaudeHandler.resolveSessionId` (same file)
-- `ClaudeHandler.streamQuery` → [Logger.warn](/src/logger.md)
-
-## Called by
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.setupEventHandlers` in [src/slack-handler.ts](/src/slack-handler.md)
 
 # Explanation
 ClaudeHandler bridges Slack's thread-oriented mental model to the Claude Code SDK's session model, which are not the same thing: the SDK mints its own opaque session UUID per invocation and has no concept of 'resume this Slack thread.' This file maintains an in-memory session map keyed by user+channel+thread and does the bookkeeping (via a mapping file owned by thread-state-manager) that lets a deterministic per-thread UUID resolve to whatever real SDK session ID got assigned last time, so a Slack thread reliably resumes the right session across multiple messages and even across bot restarts.

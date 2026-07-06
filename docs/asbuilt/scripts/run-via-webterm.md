@@ -26,7 +26,7 @@ explains:
   - scripts/run-via-webterm.ts#runTurn
 stale: false
 stale_reason: ""
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -86,13 +86,6 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 - `runTurn` → `paste` (same file)
 - `runTurn` → `sleep` (same file)
 - `send` → `postJson` (same file)
-
-## Called by
-- `CopilotHandler.query` in [src/copilot-handler.ts](/src/copilot-handler.md)
-- `Logger.debug` in [src/logger.ts](/src/logger.md)
-- `Logger.info` in [src/logger.ts](/src/logger.md)
-- `isAlive` in [src/single-instance.test.ts](/src/single-instance.test.md)
-- `killInstance` in [src/single-instance.ts](/src/single-instance.md)
 
 # Explanation
 This is the reusable runner behind epic claw-hvpv's cost migration: it

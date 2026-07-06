@@ -17,7 +17,7 @@ explains:
   - src/config.ts#validateConfig
 stale: false
 stale_reason: ""
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -32,9 +32,6 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 | `parseChannelFileRoutes` | function | 22-32 | no |
 | `resolveWebtermToken` | function | 11-20 | no |
 | `validateConfig` | function | 104-116 | yes |
-
-## Calls out
-- `loadChannelMap` → [Logger.warn](/src/logger.md)
 
 ## Called by
 - `start` in [src/index.ts](/src/index.ts.md)

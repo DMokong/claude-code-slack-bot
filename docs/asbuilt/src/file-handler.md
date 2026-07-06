@@ -19,13 +19,12 @@ explains:
   - src/file-handler.ts#FileHandler.downloadAndProcessFiles
   - src/file-handler.ts#FileHandler.downloadFile
   - src/file-handler.ts#FileHandler.formatFilePrompt
-  - src/file-handler.ts#FileHandler.getSupportedFileTypes
   - src/file-handler.ts#FileHandler.isImageFile
   - src/file-handler.ts#FileHandler.isTextFile
   - src/file-handler.ts#ProcessedFile
-stale: true
-stale_reason: "changed: src/file-handler.ts#FileHandler.getSupportedFileTypes"
-graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
+stale: false
+stale_reason: ""
+graph_hash: 9cd2e3defa5347c10e51dc358573f5528b52d3c8949ce203c6a1e4bca5bc6fec
 ---
 
 # Structure
@@ -47,22 +46,9 @@ graph_hash: d0d5217b5cdd1a8ac5b3c19460b09c3aa7a549e25c30c4a62a40ab119cb591eb
 | `ProcessedFile` | interface | 8-16 | yes |
 
 ## Calls out
-- `FileHandler.cleanupTempFiles` → [Logger.debug](/src/logger.md)
-- `FileHandler.cleanupTempFiles` → [Logger.warn](/src/logger.md)
 - `FileHandler.downloadAndProcessFiles` → `FileHandler.downloadFile` (same file)
-- `FileHandler.downloadAndProcessFiles` → [Logger.error](/src/logger.md)
-- `FileHandler.downloadAndProcessFiles` → [Logger.info](/src/logger.md)
-- `FileHandler.downloadFile` → [Logger.debug](/src/logger.md)
-- `FileHandler.downloadFile` → [Logger.error](/src/logger.md)
-- `FileHandler.downloadFile` → [Logger.info](/src/logger.md)
 - `FileHandler.downloadFile` → `FileHandler.isImageFile` (same file)
 - `FileHandler.downloadFile` → `FileHandler.isTextFile` (same file)
-- `FileHandler.downloadFile` → [Logger.warn](/src/logger.md)
-
-## Called by
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
-- `SlackHandler.handleMessage` in [src/slack-handler.ts](/src/slack-handler.md)
 
 # Explanation
 FileHandler is the sole ingestion path for Slack file attachments in this bot. It has three jobs: download the raw bytes from Slack's private URL, classify the file (image / text / binary) purely by mimetype prefix, and render it into prompt text a Claude or Copilot turn can consume — or clean it up afterward. It is invoked exclusively from SlackHandler.handleMessage, once per message carrying file attachments, and its lifecycle (download -> prompt formatting -> cleanup) brackets a single turn.
