@@ -388,11 +388,16 @@ const labelLayer = document.createElementNS(NS, "g");
 const nodeLayer = document.createElementNS(NS, "g");
 world.append(labelLayer, edgeLayer, nodeLayer);
 
+/* Edge weights below are calibrated for dense webs (~100 links, r2mcp-scale) where
+   faint hairlines sum into visible structure. A sparse sheet (post-cs26 conservative
+   resolution can leave method-call-heavy codebases with a dozen provable links)
+   renders those same hairlines as invisible — so sparse sheets draw darker/thicker. */
+const sparse = links.length <= 25;
 const edgeEls = links.map(l => {
   const e = document.createElementNS(NS, "line");
   e.setAttribute("class", "edge");
-  e.setAttribute("stroke-width", String(0.7 + Math.min(l.w, 6) * 0.28));
-  e.setAttribute("stroke-opacity", String(Math.min(0.13 + l.w * 0.025, 0.4)));
+  e.setAttribute("stroke-width", String((sparse ? 1.2 : 0.7) + Math.min(l.w, 6) * 0.28));
+  e.setAttribute("stroke-opacity", String(sparse ? Math.min(0.35 + l.w * 0.03, 0.55) : Math.min(0.13 + l.w * 0.025, 0.4)));
   edgeLayer.appendChild(e); return e;
 });
 const groupEls = groups.map(g => {
