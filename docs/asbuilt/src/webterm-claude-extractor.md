@@ -28,7 +28,7 @@ explains:
   - src/webterm-claude-extractor.ts#walkTurn
 stale: false
 stale_reason: ""
-graph_hash: 9759b135c07f30574b7bf7d243258420038465ac1a4c3772e3f14e18ef5df067
+graph_hash: 182c4a76ac41fbb6fe303225cec8eeb326b319e5416f34834c8fa4503042e983
 ---
 
 # Structure
@@ -99,7 +99,6 @@ graph_hash: 9759b135c07f30574b7bf7d243258420038465ac1a4c3772e3f14e18ef5df067
 ## Called by
 - `main` in [scripts/healthcheck-webterm-claude.ts](/scripts/healthcheck-webterm-claude.md)
 - `main` in [scripts/healthcheck-webterm-claude.ts](/scripts/healthcheck-webterm-claude.md)
-- `WebtermRuntimeHandler.fetchAndExtract` in [src/webterm-runtime-handler.ts](/src/webterm-runtime-handler.md)
 - `WebtermRuntimeHandler.fetchGridForRelay` in [src/webterm-runtime-handler.ts](/src/webterm-runtime-handler.md)
 - `WebtermRuntimeHandler.relayNewSegments` in [src/webterm-runtime-handler.ts](/src/webterm-runtime-handler.md)
 - `WebtermRuntimeHandler.runStatusLoop` in [src/webterm-runtime-handler.ts](/src/webterm-runtime-handler.md)

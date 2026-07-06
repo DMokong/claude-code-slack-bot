@@ -4,7 +4,7 @@
     "name": "web-tree-sitter",
     "version": "0.24.5"
   },
-  "target_commit": "393efa8e85fc85ea8d3750bb962a8f1bd61447ef",
+  "target_commit": "976d1924246216d3a842bddd154a5f757317a726",
   "symbols": [
     {
       "id": "scripts/healthcheck-webterm-claude.ts#SseHandle",
@@ -590,14 +590,25 @@
       "exported": true
     },
     {
+      "id": "src/file-handler.test.ts#slackFile",
+      "kind": "function",
+      "file": "src/file-handler.test.ts",
+      "span": [
+        21,
+        28
+      ],
+      "content_hash": "bfdd5d519ce52f20192807e41f998c0618fdaf04dbf906a42b5f223e7feb0a18",
+      "exported": false
+    },
+    {
       "id": "src/file-handler.ts#FileHandler",
       "kind": "class",
       "file": "src/file-handler.ts",
       "span": [
         18,
-        187
+        179
       ],
-      "content_hash": "57e2de64244ad2b28b0be0196b8fd7bb930595e5046506460bb97d0c26b3c835",
+      "content_hash": "8ce990a3ce674dba78bda8ddfd2c2c4fdfea9834d9c315c0c999447fb0ef119b",
       "exported": true
     },
     {
@@ -645,17 +656,6 @@
       "exported": true
     },
     {
-      "id": "src/file-handler.ts#FileHandler.getSupportedFileTypes",
-      "kind": "method",
-      "file": "src/file-handler.ts",
-      "span": [
-        179,
-        186
-      ],
-      "content_hash": "36979c76343d6e8f1fa88c171b1c2b29955b96dc3cddad9072f81f81a174065d",
-      "exported": true
-    },
-    {
       "id": "src/file-handler.ts#FileHandler.isImageFile",
       "kind": "method",
       "file": "src/file-handler.ts",
@@ -686,50 +686,6 @@
         16
       ],
       "content_hash": "27303803abfcbc89ecb2657fceff7cf0e9dd3046facfa98e207d5df49d109fd9",
-      "exported": true
-    },
-    {
-      "id": "src/image-handler.ts#ImageHandler",
-      "kind": "class",
-      "file": "src/image-handler.ts",
-      "span": [
-        4,
-        39
-      ],
-      "content_hash": "9e55b4cb564e2827520760363a556b6e504bf3f4f1b0b3ecc92b9e6194efb5ab",
-      "exported": true
-    },
-    {
-      "id": "src/image-handler.ts#ImageHandler.convertImageToBase64",
-      "kind": "method",
-      "file": "src/image-handler.ts",
-      "span": [
-        7,
-        16
-      ],
-      "content_hash": "46a3c1e0afe2d0c4ae3cfaf894803716272b7cd70366009146bfd91a6b423508",
-      "exported": true
-    },
-    {
-      "id": "src/image-handler.ts#ImageHandler.formatImagePrompt",
-      "kind": "method",
-      "file": "src/image-handler.ts",
-      "span": [
-        18,
-        26
-      ],
-      "content_hash": "0c4701aa8702dbc351b7d2935ec89fd29a5bca87f2a58bb3ddc512aa6cdba763",
-      "exported": true
-    },
-    {
-      "id": "src/image-handler.ts#ImageHandler.isImageSupported",
-      "kind": "method",
-      "file": "src/image-handler.ts",
-      "span": [
-        28,
-        38
-      ],
-      "content_hash": "3fafcec786d4f43011b047e4733ec2148fefdb465500ef139017cd29c5118790",
       "exported": true
     },
     {
@@ -2773,9 +2729,9 @@
       "file": "src/webterm-runtime-handler.ts",
       "span": [
         161,
-        1166
+        1116
       ],
-      "content_hash": "6e21fbab1ea2ac0fabc62531ec16e645e7748ebf5030362bce0fd08ba21e3aeb",
+      "content_hash": "6cde17e9b4be8bb2edcea59f1db3cea78235a35125d68d23b76b85011c44a140",
       "exported": true
     },
     {
@@ -2783,8 +2739,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1163,
-        1165
+        1113,
+        1115
       ],
       "content_hash": "c80ff092a6c6eb540793149e8d2b03532920a7af4c3ce5027e559c6d4f7c4b88",
       "exported": true
@@ -2794,21 +2750,10 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        807,
-        816
+        779,
+        788
       ],
       "content_hash": "0a237fdbf03579c1a6478ec34257c36519881ff166b57ff619e8827678649db6",
-      "exported": true
-    },
-    {
-      "id": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.awaitRenderSettled",
-      "kind": "method",
-      "file": "src/webterm-runtime-handler.ts",
-      "span": [
-        588,
-        611
-      ],
-      "content_hash": "14cd0815f3da86bb83c28b89ea7a7b84d16ab41b209339a349a315e9968d8707",
       "exported": true
     },
     {
@@ -2816,8 +2761,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        803,
-        805
+        775,
+        777
       ],
       "content_hash": "9dbba7183eff87fdc111cad7ba203fc22ae2fdf69b4829c79600eea678aadec8",
       "exported": true
@@ -2827,8 +2772,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        794,
-        801
+        766,
+        773
       ],
       "content_hash": "7d08d89bb1ff7361fc813567ff6277e533f1c6b7478343f28e5cfca17329c1ea",
       "exported": true
@@ -2838,8 +2783,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1017,
-        1032
+        989,
+        1004
       ],
       "content_hash": "05ad7b22aba69af854e4245033f366515a20b86add03d4e42888058aeb253c2a",
       "exported": true
@@ -2849,8 +2794,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        778,
-        789
+        750,
+        761
       ],
       "content_hash": "33a2cb026c6020569557ee41830f2cd6e5a46d562ad895c6b06ff8c4cf106ab3",
       "exported": true
@@ -2871,8 +2816,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        891,
-        940
+        863,
+        912
       ],
       "content_hash": "ce917cae6ce68b6daddb99dfc180d65cc123c5738887af7ca11d50d1a3312531",
       "exported": true
@@ -2886,17 +2831,6 @@
         583
       ],
       "content_hash": "1c70797352918d933913840fdfc4f81e81f2e58396899a270bc6d582d9f164bf",
-      "exported": true
-    },
-    {
-      "id": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.fetchAndExtract",
-      "kind": "method",
-      "file": "src/webterm-runtime-handler.ts",
-      "span": [
-        1082,
-        1089
-      ],
-      "content_hash": "a51f018375a29fb8dfc94df9f44b45013ff6556896268476cb9d09f2083b50d4",
       "exported": true
     },
     {
@@ -2915,8 +2849,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        617,
-        628
+        589,
+        600
       ],
       "content_hash": "4668c50c407ee082be5bd2ecb0b3c9413b7308a307dc032a44a2c4d0654366f8",
       "exported": true
@@ -2926,8 +2860,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1034,
-        1044
+        1006,
+        1016
       ],
       "content_hash": "6fc103ea6bacda67944fe19f8a93490d602f93920e845491643df93e25ff6c7f",
       "exported": true
@@ -2937,8 +2871,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1046,
-        1048
+        1018,
+        1020
       ],
       "content_hash": "b6dde7aa4176c11bcf7f37689e5a3d150c2e7a90bb2e81224a5f06bfe2745496",
       "exported": true
@@ -2948,8 +2882,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1056,
-        1067
+        1028,
+        1039
       ],
       "content_hash": "93b9c4fa8110bde8cfde33d2375c70c74083c35ce26c325c6ab25c2ceb8b1bce",
       "exported": true
@@ -2981,8 +2915,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1091,
-        1093
+        1041,
+        1043
       ],
       "content_hash": "60a031d91f3daa6d1f2d074a6eb8881aa6f2698594bfc6b06be1f6603a6fcad6",
       "exported": true
@@ -2992,8 +2926,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        740,
-        755
+        712,
+        727
       ],
       "content_hash": "918579bfb9ebfb9952842f1b204edf7abdbd477d5ae2e1fcde41233ef3bd7178",
       "exported": true
@@ -3003,8 +2937,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1109,
-        1123
+        1059,
+        1073
       ],
       "content_hash": "b1620c22d3451195c81febbea6c3debed577bfcc76367b89bdb73ecd5a65fdd7",
       "exported": true
@@ -3025,8 +2959,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        820,
-        846
+        792,
+        818
       ],
       "content_hash": "d82cd60f5561708e07e6cc8077bbbcc1ec55f9576793f5054baf41ea7f8ab27b",
       "exported": true
@@ -3036,8 +2970,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        655,
-        736
+        627,
+        708
       ],
       "content_hash": "dd5209e9e54a993f99dd323cf55d9aabd15d23d454b09c4f34636f44b1f24820",
       "exported": true
@@ -3058,8 +2992,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        942,
-        984
+        914,
+        956
       ],
       "content_hash": "a457f9efe5c8abbbb92c86c0e6fb602a3c39fdb88c4733216d80e6da1b6b95ff",
       "exported": true
@@ -3080,8 +3014,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        986,
-        1002
+        958,
+        974
       ],
       "content_hash": "07f5ab65624e91aef864341278c3186a68a4fc1d42aa27867b56d99ffe039dc7",
       "exported": true
@@ -3091,8 +3025,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1004,
-        1011
+        976,
+        983
       ],
       "content_hash": "513f13b72a82a4599b9aa0c8046b4df4f016a8328e4302c4383d538ce9776357",
       "exported": true
@@ -3102,8 +3036,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1128,
-        1160
+        1078,
+        1110
       ],
       "content_hash": "603c1875f8e9c1315f25a9bdfc32bf59d45b12cd8e252994c8300c12fc0216bf",
       "exported": true
@@ -3146,8 +3080,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        852,
-        889
+        824,
+        861
       ],
       "content_hash": "3dbb07c8c4567715c67ed93012b8338aa2c49c4778fe5cf718da39f043d82905",
       "exported": true
@@ -3157,8 +3091,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        761,
-        771
+        733,
+        743
       ],
       "content_hash": "f28b66382e2f805d32fdd780925b77c718f27bc917f5a2e989da553058860235",
       "exported": true
@@ -3168,8 +3102,8 @@
       "kind": "method",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1095,
-        1107
+        1045,
+        1057
       ],
       "content_hash": "3609ca9209d4263d9003eba23637b18dab94807a1b266cad65b3d345df4d225c",
       "exported": true
@@ -3212,8 +3146,8 @@
       "kind": "function",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1179,
-        1183
+        1129,
+        1133
       ],
       "content_hash": "5c3ba3eddcfff425f0b6febaec331180fc3573ceefe6a1f30fdfd446e320f587",
       "exported": true
@@ -3234,8 +3168,8 @@
       "kind": "function",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1170,
-        1172
+        1120,
+        1122
       ],
       "content_hash": "3509a2680de73a71150d234f81bf6038afc1cd57d6819dd99609205ccd441d1c",
       "exported": true
@@ -3245,8 +3179,8 @@
       "kind": "function",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1192,
-        1194
+        1142,
+        1144
       ],
       "content_hash": "efc4dd325f33bd7ada0aa0955b7d8bdc96b39eafc98820ce9c412b19bf93aeed",
       "exported": false
@@ -3267,8 +3201,8 @@
       "kind": "function",
       "file": "src/webterm-runtime-handler.ts",
       "span": [
-        1188,
-        1190
+        1138,
+        1140
       ],
       "content_hash": "a1dfbbcf236b2e4e60222863a713e0aa0fbbf081a269ee9dae2822d71e9f98e7",
       "exported": true
@@ -4611,31 +4545,6 @@
     {
       "from": "src/file-handler.ts#FileHandler.isTextFile",
       "toName": "startsWith",
-      "resolved": null
-    },
-    {
-      "from": "src/image-handler.ts#ImageHandler.convertImageToBase64",
-      "toName": "error",
-      "resolved": "src/logger.ts#Logger.error"
-    },
-    {
-      "from": "src/image-handler.ts#ImageHandler.convertImageToBase64",
-      "toName": "readFileSync",
-      "resolved": null
-    },
-    {
-      "from": "src/image-handler.ts#ImageHandler.convertImageToBase64",
-      "toName": "toString",
-      "resolved": null
-    },
-    {
-      "from": "src/image-handler.ts#ImageHandler.isImageSupported",
-      "toName": "includes",
-      "resolved": null
-    },
-    {
-      "from": "src/image-handler.ts#ImageHandler.isImageSupported",
-      "toName": "toLowerCase",
       "resolved": null
     },
     {
@@ -7624,31 +7533,6 @@
       "resolved": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.tryAdoptSession"
     },
     {
-      "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.awaitRenderSettled",
-      "toName": "fetchAndExtract",
-      "resolved": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.fetchAndExtract"
-    },
-    {
-      "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.awaitRenderSettled",
-      "toName": "info",
-      "resolved": "src/logger.ts#Logger.info"
-    },
-    {
-      "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.awaitRenderSettled",
-      "toName": "now",
-      "resolved": null
-    },
-    {
-      "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.awaitRenderSettled",
-      "toName": "sleep",
-      "resolved": "src/webterm-runtime-handler.ts#sleep"
-    },
-    {
-      "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.awaitRenderSettled",
-      "toName": "stringify",
-      "resolved": null
-    },
-    {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.buildBootCmd",
       "toName": "buildBootCtx",
       "resolved": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.buildBootCtx"
@@ -7827,21 +7711,6 @@
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.deliverReply",
       "toName": "update",
       "resolved": null
-    },
-    {
-      "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.fetchAndExtract",
-      "toName": "extractTurn",
-      "resolved": "src/webterm-claude-extractor.ts#extractTurn"
-    },
-    {
-      "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.fetchAndExtract",
-      "toName": "fetchGridText",
-      "resolved": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.fetchGridText"
-    },
-    {
-      "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.fetchAndExtract",
-      "toName": "fetchScrollback",
-      "resolved": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.fetchScrollback"
     },
     {
       "from": "src/webterm-runtime-handler.ts#WebtermRuntimeHandler.fetchExitCause",

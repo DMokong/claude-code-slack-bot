@@ -16,9 +16,9 @@ explains:
   - src/image-handler.ts#ImageHandler.convertImageToBase64
   - src/image-handler.ts#ImageHandler.formatImagePrompt
   - src/image-handler.ts#ImageHandler.isImageSupported
-stale: false
-stale_reason: ""
-graph_hash: 9759b135c07f30574b7bf7d243258420038465ac1a4c3772e3f14e18ef5df067
+stale: true
+stale_reason: source removed
+graph_hash: 182c4a76ac41fbb6fe303225cec8eeb326b319e5416f34834c8fa4503042e983
 ---
 
 # Structure

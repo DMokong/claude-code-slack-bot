@@ -33,81 +33,76 @@ explains:
   - src/webterm-runtime-handler.ts#decodeSlackEntities
   - src/webterm-runtime-handler.ts#shellSingleQuote
   - src/webterm-runtime-handler.ts#stripTransportSuffix
-stale: false
-stale_reason: ""
-graph_hash: 9759b135c07f30574b7bf7d243258420038465ac1a4c3772e3f14e18ef5df067
+stale: true
+stale_reason: "changed: src/webterm-runtime-handler.ts#WebtermRuntimeHandler"
+graph_hash: 182c4a76ac41fbb6fe303225cec8eeb326b319e5416f34834c8fa4503042e983
 ---
 
 # Structure
 
 ## Exports
 - `HandleMessageOpts` (interface, lines 146-154)
-- `WebtermRuntimeHandler` (class, lines 161-1166)
+- `WebtermRuntimeHandler` (class, lines 161-1116)
 - `WebtermRuntimeOpts` (interface, lines 88-129)
-- `decodeSlackEntities` (function, lines 1179-1183)
+- `decodeSlackEntities` (function, lines 1129-1133)
 - `deliver` (const, lines 319-319)
-- `shellSingleQuote` (function, lines 1170-1172)
+- `shellSingleQuote` (function, lines 1120-1122)
 - `stopStatus` (const, lines 315-318)
-- `stripTransportSuffix` (function, lines 1188-1190)
+- `stripTransportSuffix` (function, lines 1138-1140)
 
 ## Symbols
 | Symbol | Kind | Span | Exported |
 |---|---|---|---|
 | `HandleMessageOpts` | interface | 146-154 | yes |
 | `InternalOpts` | interface | 156-159 | no |
-| `WebtermRuntimeHandler` | class | 161-1166 | yes |
-| `WebtermRuntimeHandler._sessionCount` | method | 1163-1165 | yes |
-| `WebtermRuntimeHandler.adoptOrCreateSession` | method | 807-816 | yes |
-| `WebtermRuntimeHandler.awaitRenderSettled` | method | 588-611 | yes |
-| `WebtermRuntimeHandler.buildBootCmd` | method | 803-805 | yes |
-| `WebtermRuntimeHandler.buildBootCtx` | method | 794-801 | yes |
-| `WebtermRuntimeHandler.checkInputResponse` | method | 1017-1032 | yes |
-| `WebtermRuntimeHandler.completeBootHandshake` | method | 778-789 | yes |
+| `WebtermRuntimeHandler` | class | 161-1116 | yes |
+| `WebtermRuntimeHandler._sessionCount` | method | 1113-1115 | yes |
+| `WebtermRuntimeHandler.adoptOrCreateSession` | method | 779-788 | yes |
+| `WebtermRuntimeHandler.buildBootCmd` | method | 775-777 | yes |
+| `WebtermRuntimeHandler.buildBootCtx` | method | 766-773 | yes |
+| `WebtermRuntimeHandler.checkInputResponse` | method | 989-1004 | yes |
+| `WebtermRuntimeHandler.completeBootHandshake` | method | 750-761 | yes |
 | `WebtermRuntimeHandler.constructor` | method | 174-213 | yes |
-| `WebtermRuntimeHandler.createSession` | method | 891-940 | yes |
+| `WebtermRuntimeHandler.createSession` | method | 863-912 | yes |
 | `WebtermRuntimeHandler.deliverReply` | method | 571-583 | yes |
-| `WebtermRuntimeHandler.fetchAndExtract` | method | 1082-1089 | yes |
 | `WebtermRuntimeHandler.fetchExitCause` | method | 495-506 | yes |
-| `WebtermRuntimeHandler.fetchGridForRelay` | method | 617-628 | yes |
-| `WebtermRuntimeHandler.fetchGridMeta` | method | 1034-1044 | yes |
-| `WebtermRuntimeHandler.fetchGridText` | method | 1046-1048 | yes |
-| `WebtermRuntimeHandler.fetchScrollback` | method | 1056-1067 | yes |
+| `WebtermRuntimeHandler.fetchGridForRelay` | method | 589-600 | yes |
+| `WebtermRuntimeHandler.fetchGridMeta` | method | 1006-1016 | yes |
+| `WebtermRuntimeHandler.fetchGridText` | method | 1018-1020 | yes |
+| `WebtermRuntimeHandler.fetchScrollback` | method | 1028-1039 | yes |
 | `WebtermRuntimeHandler.handleMessage` | method | 219-270 | yes |
 | `WebtermRuntimeHandler.isRunningClaude` | method | 294-301 | yes |
-| `WebtermRuntimeHandler.killWebtermSession` | method | 1091-1093 | yes |
-| `WebtermRuntimeHandler.postFreshStreamMessage` | method | 740-755 | yes |
-| `WebtermRuntimeHandler.postReply` | method | 1109-1123 | yes |
+| `WebtermRuntimeHandler.killWebtermSession` | method | 1041-1043 | yes |
+| `WebtermRuntimeHandler.postFreshStreamMessage` | method | 712-727 | yes |
+| `WebtermRuntimeHandler.postReply` | method | 1059-1073 | yes |
 | `WebtermRuntimeHandler.postStatusPlaceholder` | method | 514-529 | yes |
-| `WebtermRuntimeHandler.reapIdleSessions` | method | 820-846 | yes |
-| `WebtermRuntimeHandler.relayNewSegments` | method | 655-736 | yes |
+| `WebtermRuntimeHandler.reapIdleSessions` | method | 792-818 | yes |
+| `WebtermRuntimeHandler.relayNewSegments` | method | 627-708 | yes |
 | `WebtermRuntimeHandler.resolveSession` | method | 272-290 | yes |
-| `WebtermRuntimeHandler.runSseListener` | method | 942-984 | yes |
+| `WebtermRuntimeHandler.runSseListener` | method | 914-956 | yes |
 | `WebtermRuntimeHandler.runStatusLoop` | method | 534-567 | yes |
-| `WebtermRuntimeHandler.sendInput` | method | 986-1002 | yes |
-| `WebtermRuntimeHandler.sendKeys` | method | 1004-1011 | yes |
-| `WebtermRuntimeHandler.shutdown` | method | 1128-1160 | yes |
+| `WebtermRuntimeHandler.sendInput` | method | 958-974 | yes |
+| `WebtermRuntimeHandler.sendKeys` | method | 976-983 | yes |
+| `WebtermRuntimeHandler.shutdown` | method | 1078-1110 | yes |
 | `WebtermRuntimeHandler.streamEnabled` | method | 508-510 | yes |
 | `WebtermRuntimeHandler.takeTurn` | method | 303-454 | yes |
 | `WebtermRuntimeHandler.threadKey` | method | 215-217 | yes |
-| `WebtermRuntimeHandler.tryAdoptSession` | method | 852-889 | yes |
-| `WebtermRuntimeHandler.updateStreamMessage` | method | 761-771 | yes |
-| `WebtermRuntimeHandler.waitForPromptReady` | method | 1095-1107 | yes |
+| `WebtermRuntimeHandler.tryAdoptSession` | method | 824-861 | yes |
+| `WebtermRuntimeHandler.updateStreamMessage` | method | 733-743 | yes |
+| `WebtermRuntimeHandler.waitForPromptReady` | method | 1045-1057 | yes |
 | `WebtermRuntimeHandler.waitForTurnSignal` | method | 461-491 | yes |
 | `WebtermRuntimeOpts` | interface | 88-129 | yes |
 | `WebtermSession` | interface | 131-144 | no |
-| `decodeSlackEntities` | function | 1179-1183 | yes |
+| `decodeSlackEntities` | function | 1129-1133 | yes |
 | `deliver` | const | 319-319 | yes |
-| `shellSingleQuote` | function | 1170-1172 | yes |
-| `sleep` | function | 1192-1194 | no |
+| `shellSingleQuote` | function | 1120-1122 | yes |
+| `sleep` | function | 1142-1144 | no |
 | `stopStatus` | const | 315-318 | yes |
-| `stripTransportSuffix` | function | 1188-1190 | yes |
+| `stripTransportSuffix` | function | 1138-1140 | yes |
 
 ## Calls out
 - `WebtermRuntimeHandler.adoptOrCreateSession` → `WebtermRuntimeHandler.createSession` (same file)
 - `WebtermRuntimeHandler.adoptOrCreateSession` → `WebtermRuntimeHandler.tryAdoptSession` (same file)
-- `WebtermRuntimeHandler.awaitRenderSettled` → `WebtermRuntimeHandler.fetchAndExtract` (same file)
-- `WebtermRuntimeHandler.awaitRenderSettled` → [Logger.info](/src/logger.md)
-- `WebtermRuntimeHandler.awaitRenderSettled` → `sleep` (same file)
 - `WebtermRuntimeHandler.buildBootCmd` → `WebtermRuntimeHandler.buildBootCtx` (same file)
 - `WebtermRuntimeHandler.buildBootCmd` → `shellSingleQuote` (same file)
 - `WebtermRuntimeHandler.checkInputResponse` → [Logger.warn](/src/logger.md)
@@ -126,9 +121,6 @@ graph_hash: 9759b135c07f30574b7bf7d243258420038465ac1a4c3772e3f14e18ef5df067
 - `WebtermRuntimeHandler.createSession` → `WebtermRuntimeHandler.sendInput` (same file)
 - `WebtermRuntimeHandler.deliverReply` → [Logger.error](/src/logger.md)
 - `WebtermRuntimeHandler.deliverReply` → `WebtermRuntimeHandler.postReply` (same file)
-- `WebtermRuntimeHandler.fetchAndExtract` → [extractTurn](/src/webterm-claude-extractor.md)
-- `WebtermRuntimeHandler.fetchAndExtract` → `WebtermRuntimeHandler.fetchGridText` (same file)
-- `WebtermRuntimeHandler.fetchAndExtract` → `WebtermRuntimeHandler.fetchScrollback` (same file)
 - `WebtermRuntimeHandler.fetchGridForRelay` → [extractSegments](/src/webterm-claude-extractor.md)
 - `WebtermRuntimeHandler.fetchGridForRelay` → `WebtermRuntimeHandler.fetchGridMeta` (same file)
 - `WebtermRuntimeHandler.fetchGridForRelay` → `WebtermRuntimeHandler.fetchScrollback` (same file)

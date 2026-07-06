@@ -36,3 +36,4 @@
 * **Fold**: BACKFILL-slackbot-03 enriched [src/telemetry.ts](/src/telemetry.md) (accuracy-audited).
 * **Fold**: BACKFILL-slackbot-03 enriched [src/types.ts](/src/types.md) (accuracy-audited).
 * **Refresh**: 1 regenerated, 0 new, 1 stale.
+* **Refresh**: 4 regenerated, 1 new, 2 stale.

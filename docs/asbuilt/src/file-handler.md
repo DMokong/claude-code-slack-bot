@@ -22,25 +22,25 @@ explains:
   - src/file-handler.ts#FileHandler.isTextFile
   - src/file-handler.ts#ProcessedFile
 stale: true
-stale_reason: "changed: src/file-handler.ts#FileHandler.downloadFile"
-graph_hash: 9759b135c07f30574b7bf7d243258420038465ac1a4c3772e3f14e18ef5df067
+stale_reason: "changed: src/file-handler.ts#FileHandler.downloadFile,
+  src/file-handler.ts#FileHandler.getSupportedFileTypes"
+graph_hash: 182c4a76ac41fbb6fe303225cec8eeb326b319e5416f34834c8fa4503042e983
 ---
 
 # Structure
 
 ## Exports
-- `FileHandler` (class, lines 18-187)
+- `FileHandler` (class, lines 18-179)
 - `ProcessedFile` (interface, lines 8-16)
 
 ## Symbols
 | Symbol | Kind | Span | Exported |
 |---|---|---|---|
-| `FileHandler` | class | 18-187 | yes |
+| `FileHandler` | class | 18-179 | yes |
 | `FileHandler.cleanupTempFiles` | method | 166-177 | yes |
 | `FileHandler.downloadAndProcessFiles` | method | 25-47 | yes |
 | `FileHandler.downloadFile` | method | 49-106 | yes |
 | `FileHandler.formatFilePrompt` | method | 126-164 | yes |
-| `FileHandler.getSupportedFileTypes` | method | 179-186 | yes |
 | `FileHandler.isImageFile` | method | 108-110 | yes |
 | `FileHandler.isTextFile` | method | 112-124 | yes |
 | `ProcessedFile` | interface | 8-16 | yes |

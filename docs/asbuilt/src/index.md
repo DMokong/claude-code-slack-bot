@@ -5,8 +5,8 @@
 * [src/copilot-handler.ts](copilot-handler.md) - Skeleton concept for src/copilot-handler.ts (extracted; 3 symbols).
 * [src/engine-router.test.ts](engine-router.test.md) - Skeleton concept for src/engine-router.test.ts (extracted; 1 symbols).
 * [src/engine-router.ts](engine-router.md) - Skeleton concept for src/engine-router.ts (extracted; 3 symbols).
-* [src/file-handler.ts](file-handler.md) - Skeleton concept for src/file-handler.ts (extracted; 9 symbols).
-* [src/image-handler.ts](image-handler.md) - Skeleton concept for src/image-handler.ts (extracted; 4 symbols).
+* [src/file-handler.test.ts](file-handler.test.md) - Skeleton concept for src/file-handler.test.ts (extracted; 1 symbols).
+* [src/file-handler.ts](file-handler.md) - Skeleton concept for src/file-handler.ts (extracted; 8 symbols).
 * [src/image-uploader.test.ts](image-uploader.test.md) - Skeleton concept for src/image-uploader.test.ts (extracted; 1 symbols).
 * [src/image-uploader.ts](image-uploader.md) - Skeleton concept for src/image-uploader.ts (extracted; 7 symbols).
 * [src/index.ts](index.ts.md) - Skeleton concept for src/index.ts (extracted; 2 symbols).
@@ -29,5 +29,5 @@
 * [src/webterm-claude-extractor.test.ts](webterm-claude-extractor.test.md) - Skeleton concept for src/webterm-claude-extractor.test.ts (extracted; 2 symbols).
 * [src/webterm-claude-extractor.ts](webterm-claude-extractor.md) - Skeleton concept for src/webterm-claude-extractor.ts (extracted; 22 symbols).
 * [src/webterm-runtime-handler.test.ts](webterm-runtime-handler.test.md) - Skeleton concept for src/webterm-runtime-handler.test.ts (extracted; 27 symbols).
-* [src/webterm-runtime-handler.ts](webterm-runtime-handler.md) - Skeleton concept for src/webterm-runtime-handler.ts (extracted; 48 symbols).
+* [src/webterm-runtime-handler.ts](webterm-runtime-handler.md) - Skeleton concept for src/webterm-runtime-handler.ts (extracted; 46 symbols).
 * [src/working-directory-manager.ts](working-directory-manager.md) - Skeleton concept for src/working-directory-manager.ts (extracted; 13 symbols).

@@ -25,7 +25,7 @@ explains:
   - src/logger.ts#todayKey
 stale: false
 stale_reason: ""
-graph_hash: 9759b135c07f30574b7bf7d243258420038465ac1a4c3772e3f14e18ef5df067
+graph_hash: 182c4a76ac41fbb6fe303225cec8eeb326b319e5416f34834c8fa4503042e983
 ---
 
 # Structure
@@ -82,7 +82,6 @@ graph_hash: 9759b135c07f30574b7bf7d243258420038465ac1a4c3772e3f14e18ef5df067
 - `FileHandler.downloadFile` in [src/file-handler.ts](/src/file-handler.md)
 - `FileHandler.downloadFile` in [src/file-handler.ts](/src/file-handler.md)
 - `FileHandler.downloadFile` in [src/file-handler.ts](/src/file-handler.md)
-- `ImageHandler.convertImageToBase64` in [src/image-handler.ts](/src/image-handler.md)
 - `ImageUploader.uploadImage` in [src/image-uploader.ts](/src/image-uploader.md)
 - `ImageUploader.uploadImage` in [src/image-uploader.ts](/src/image-uploader.md)
 - `ImageUploader.uploadImage` in [src/image-uploader.ts](/src/image-uploader.md)
@@ -131,7 +130,6 @@ graph_hash: 9759b135c07f30574b7bf7d243258420038465ac1a4c3772e3f14e18ef5df067
 - `setEngine` in [src/thread-state-manager.ts](/src/thread-state-manager.md)
 - `TodoManager.cleanupSession` in [src/todo-manager.ts](/src/todo-manager.md)
 - `TodoManager.updateTodos` in [src/todo-manager.ts](/src/todo-manager.md)
-- `WebtermRuntimeHandler.awaitRenderSettled` in [src/webterm-runtime-handler.ts](/src/webterm-runtime-handler.md)
 - `WebtermRuntimeHandler.checkInputResponse` in [src/webterm-runtime-handler.ts](/src/webterm-runtime-handler.md)
 - `WebtermRuntimeHandler.completeBootHandshake` in [src/webterm-runtime-handler.ts](/src/webterm-runtime-handler.md)
 - `WebtermRuntimeHandler.constructor` in [src/webterm-runtime-handler.ts](/src/webterm-runtime-handler.md)

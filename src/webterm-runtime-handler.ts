@@ -16,7 +16,7 @@
 
 import type { WebClient } from "@slack/web-api";
 import { Logger } from "./logger";
-import { extractTurn, extractSegments, isGridIdle, formatTurnForSlack, extractActivity, type ExtractedTurn, type Segment } from "./webterm-claude-extractor";
+import { extractTurn, extractSegments, isGridIdle, formatTurnForSlack, extractActivity, type Segment } from "./webterm-claude-extractor";
 
 const DEFAULT_WEBTERM_URL = "http://127.0.0.1:7681";
 const DEFAULT_CLAUDE_CMD = "claude --dangerously-skip-permissions";
@@ -582,34 +582,6 @@ export class WebtermRuntimeHandler {
     await this.postReply(req, text);
   }
 
-  // Re-extract until two consecutive snapshots match (the response stopped
-  // growing), bounded by RENDER_SETTLE_DEADLINE_MS. Best-effort: on webterm
-  // errors or a vanished echo, post the last good extraction.
-  private async awaitRenderSettled(
-    session: WebtermSession,
-    userText: string,
-    last: ExtractedTurn,
-  ): Promise<ExtractedTurn> {
-    const deadline = Date.now() + RENDER_SETTLE_DEADLINE_MS;
-    let prev = JSON.stringify([last.assistant, last.toolNotes]);
-    while (Date.now() < deadline && session.alive) {
-      await sleep(this.opts.extractStableMs);
-      let turn: ExtractedTurn | null = null;
-      try {
-        turn = await this.fetchAndExtract(session.id, userText);
-      } catch {
-        break;
-      }
-      if (!turn) break;
-      const cur = JSON.stringify([turn.assistant, turn.toolNotes]);
-      last = turn;
-      if (cur === prev) return last;
-      this.logger.info("Render still settling, re-polling", { sessionId: session.id });
-      prev = cur;
-    }
-    return last;
-  }
-
   // Returns the relay transcript: viewport, or scrollback+viewport when the
   // user echo scrolled off the 40-row viewport (claw-fcd9). Mirrors
   // fetchAndExtract's recovery but returns the TEXT so the caller can both
@@ -1064,28 +1036,6 @@ export class WebtermRuntimeHandler {
     } catch {
       return "";
     }
-  }
-
-  // Extract the turn from the session grid, recovering scrolled-off content
-  // when needed (claw-fcd9). extractTurn(viewport) returning null means the
-  // user echo isn't in the 40-row viewport — almost always a tall response
-  // that pushed the echo off the top. We then prepend the scrollback (the rows
-  // above the viewport) and re-extract from the full transcript. This
-  // distinguishes "echo scrolled off (turn likely complete)" from
-  // "echo present but assistant empty (genuine premature prompt-ready / etj7)":
-  // the latter returns a non-null turn and never triggers the scrollback fetch,
-  // so the caller's retry loop handles it without burning the 180s timeout.
-  //
-  // The primary viewport fetch can throw (webterm died mid-turn, M3) — that
-  // propagates so the caller posts a warning. The scrollback fetch is
-  // best-effort (swallowed); worst case we return null and the caller retries.
-  private async fetchAndExtract(sessionId: string, userText: string): Promise<ExtractedTurn | null> {
-    const viewport = await this.fetchGridText(sessionId);
-    const turn = extractTurn(viewport, userText);
-    if (turn !== null) return turn;
-    const scrollback = await this.fetchScrollback(sessionId);
-    if (!scrollback) return null;
-    return extractTurn(scrollback + "\n" + viewport, userText);
   }
 
   private async killWebtermSession(sessionId: string): Promise<void> {
