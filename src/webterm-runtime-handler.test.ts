@@ -268,6 +268,8 @@ describe("WebtermRuntimeHandler", () => {
       pasteSettleMs: 5,
       extractStableMs: 10,
       turnPollMs: 20,
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
     });
   });
 
@@ -520,6 +522,8 @@ describe("WebtermRuntimeHandler", () => {
       pasteSettleMs: 5,
       extractStableMs: 10,
       turnPollMs: 20,
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
     });
     const req = { channelId: "C1", threadTs: "T1", text: "count to 45", slack: slack.client };
     const p = handler.handleMessage(req);
@@ -544,6 +548,8 @@ describe("WebtermRuntimeHandler", () => {
       return mock.fetchImpl(input as any, init);
     };
     handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local",
       fetchImpl: flaky,
       cwd: "/tmp/test",
@@ -559,6 +565,8 @@ describe("WebtermRuntimeHandler", () => {
     // paste (aggregated into the paste burst as a newline) — verified empirically
     // 2026-06-11 on v2.1.173. The handler must wait out the settle window.
     handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local",
       fetchImpl: mock.fetchImpl,
       cwd: "/tmp/test",
@@ -719,6 +727,8 @@ describe("WebtermRuntimeHandler", () => {
       return mock.fetchImpl(input as any, init);
     };
     handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local",
       fetchImpl: flaky,
       cwd: "/tmp/test",
@@ -965,6 +975,8 @@ describe("WebtermRuntimeHandler", () => {
 
   it("streams a long multi-step task with no fixed turn cap (claw-gxzq)", async () => {
     handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 15, slidingInactivityMs: 10_000,
     });
@@ -1008,6 +1020,8 @@ describe("WebtermRuntimeHandler", () => {
 
   it("aborts a wedged session after the sliding inactivity window (claw-gxzq)", async () => {
     handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 10, slidingInactivityMs: 60,
     });
@@ -1034,6 +1048,8 @@ describe("live-activity streaming (claw-1ta5)", () => {
     mock = makeMockWebterm();
     slack = makeSlack();
     handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local",
       fetchImpl: mock.fetchImpl,
       cwd: "/tmp/test",
@@ -1093,6 +1109,8 @@ describe("live-activity streaming (claw-1ta5)", () => {
   it("falls back to a single message when the Slack client lacks chat.update", async () => {
     slack = makeSlack({ withUpdate: false });
     handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
       pasteSettleMs: 5, extractStableMs: 10, streamStatus: true, statusPollMs: 10,
     });
@@ -1125,6 +1143,8 @@ describe("live-activity streaming (claw-1ta5)", () => {
 
   it("streams an error into the placeholder on turn timeout (no orphan placeholder)", async () => {
     const handler2 = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
       pasteSettleMs: 5, extractStableMs: 10, streamStatus: true, statusPollMs: 10,
     });
@@ -1279,6 +1299,8 @@ describe("trailing-block settle gating (claw-gxzq idle-flap)", () => {
 
   it("streaming: a transient idle-looking frame must not finalize the trailing block", async () => {
     const handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 60_000,
       streamStatus: true, statusPollMs: 10,
@@ -1311,6 +1333,8 @@ describe("trailing-block settle gating (claw-gxzq idle-flap)", () => {
 
   it("discrete: the trailing block posts complete, never at its poison-frame text", async () => {
     const handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 60_000,
     });
@@ -1346,6 +1370,8 @@ describe("trailing-block settle gating (claw-gxzq idle-flap)", () => {
     const body = load("09-turnend-flap-2-body");
 
     const handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 60_000,
       streamStatus: true, statusPollMs: 10,
@@ -1380,6 +1406,8 @@ describe("idle session reaping (claw-9nvw)", () => {
   beforeEach(() => {
     mock = makeMockWebterm();
     handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local",
       fetchImpl: mock.fetchImpl,
       cwd: "/tmp/test",
@@ -1459,6 +1487,8 @@ describe("direct-spawn session creation (claw-3btg.1)", () => {
     mock = makeMockWebterm();
     slack = makeSlack();
     handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local",
       fetchImpl: mock.fetchImpl,
       cwd: "/tmp/test",
@@ -1505,6 +1535,8 @@ describe("direct-spawn session creation (claw-3btg.1)", () => {
       pasteSettleMs: 5,
       extractStableMs: 10,
       turnPollMs: 20,
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
     });
     const req = { channelId: "C1", threadTs: "T9", text: "hi", slack: slack.client };
     const p = legacy.handleMessage(req);
@@ -1535,6 +1567,8 @@ describe("wave2 primitives (claw-3btg.2/.3/.4/.8)", () => {
 
   it("/wait wakes the turn loop: completes with a huge poll interval and no post-answer prompt-ready", async () => {
     const handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 60_000,
     });
@@ -1551,6 +1585,8 @@ describe("wave2 primitives (claw-3btg.2/.3/.4/.8)", () => {
 
   it("input to a retained dead session posts the exit cause (409 path)", async () => {
     const handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20,
     });
@@ -1576,6 +1612,8 @@ describe("wave2 primitives (claw-3btg.2/.3/.4/.8)", () => {
 
   it("stable-idle gate defers while the screen is still painting (lastOutputMs floor, claw-3btg.4)", async () => {
     const handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, idleOutputFloorMs: 250,
     });
@@ -1597,6 +1635,8 @@ describe("wave2 primitives (claw-3btg.2/.3/.4/.8)", () => {
 
   it("mid-turn death posts the exit cause from the retained session (claw-3btg.2)", async () => {
     const handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20,
     });
@@ -1634,6 +1674,7 @@ describe("SSE gate + event-driven wake (claw-kdqv, claw-rr2x)", () => {
     const handler = new WebtermRuntimeHandler({
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10,
     });
     const turn = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "hi", slack: slack.client });
     await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
@@ -1659,6 +1700,7 @@ describe("SSE gate + event-driven wake (claw-kdqv, claw-rr2x)", () => {
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
       // Poll timer far beyond the test timeout: only an SSE wake can finish this turn fast.
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 8_000, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10,
     });
     const turn = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "hi", slack: slack.client });
     await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
@@ -1675,6 +1717,100 @@ describe("SSE gate + event-driven wake (claw-kdqv, claw-rr2x)", () => {
       new Promise((_, rej) => setTimeout(() => rej(new Error("turn did not complete — SSE wake missing")), 4_000)),
     ]);
     expect(slack.posted.length + slack.updated.length).toBeGreaterThan(0);
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+});
+
+describe("hardened turn-end + tripwire (claw-46g8)", () => {
+  function idleGridNoFooter(userInput: string, blocks: string[]): string {
+    // Idle-LOOKING: prompt box present, no active spinner — but also no
+    // past-tense completion footer. This is the mid-answer pause signature.
+    return [
+      `❯ ${userInput}`,
+      "",
+      ...blocks.flatMap((b) => [`⏺ ${b}`, ""]),
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Opus 4.8 (1M context) │ ⏱ 5s",
+    ].join("\n");
+  }
+  function doneGrid(userInput: string, blocks: string[]): string {
+    return [
+      `❯ ${userInput}`,
+      "",
+      ...blocks.flatMap((b) => [`⏺ ${b}`, ""]),
+      "✻ Cooked for 12s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Opus 4.8 (1M context) │ ⏱ 12s",
+    ].join("\n");
+  }
+
+  async function bootTurn(mock: ReturnType<typeof makeMockWebterm>, slack: ReturnType<typeof makeSlack>, handlerOpts: any, text = "three parts") {
+    const handler = new WebtermRuntimeHandler({
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      ...handlerOpts,
+    });
+    const turn = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text, slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const sid = mock.onlySessionId();
+    mock.setText(sid, buildBootGrid());
+    mock.emitPromptReady(sid);
+    await waitFor(() => mock.sessions.get(sid)!.inputs.some((i) => i.kind === "paste"));
+    return { handler, turn, sid };
+  }
+
+  it("a frozen idle grid WITHOUT the completion footer does not end the turn (haiku drop)", async () => {
+    const mock = makeMockWebterm();
+    const slack = makeSlack();
+    const { handler, turn, sid } = await bootTurn(mock, slack, { turnEndQuietMs: 5_000, tripwireDelayMs: 10 });
+    let settled = false;
+    void turn.then(() => { settled = true; }, () => { settled = true; });
+
+    mock.setText(sid, idleGridNoFooter("three parts", ["Part one.", "Part two."]));
+    mock.emitOutputChunk(sid);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(settled).toBe(false); // would have finalized at ~3 stable polls before claw-46g8
+
+    // claude finishes: part three + past-tense footer → turn completes with ALL parts.
+    mock.setText(sid, doneGrid("three parts", ["Part one.", "Part two.", "Part three haiku."]));
+    mock.emitOutputChunk(sid);
+    await turn;
+    const allText = [...slack.posted.map((p) => p.text), ...slack.updated.map((u) => u.text)].join("\n");
+    expect(allText).toContain("Part three haiku.");
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+
+  it("footerless turns still finalize after the quiet fallback window", async () => {
+    const mock = makeMockWebterm();
+    const slack = makeSlack();
+    const { handler, turn, sid } = await bootTurn(mock, slack, { turnEndQuietMs: 150, tripwireDelayMs: 10 });
+    mock.setText(sid, idleGridNoFooter("three parts", ["Only part."]));
+    mock.emitOutputChunk(sid);
+    await turn;
+    const allText = [...slack.posted.map((p) => p.text), ...slack.updated.map((u) => u.text)].join("\n");
+    expect(allText).toContain("Only part.");
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+
+  it("tripwire posts content that appears after finalization", async () => {
+    const mock = makeMockWebterm();
+    const slack = makeSlack();
+    const { handler, turn, sid } = await bootTurn(mock, slack, { turnEndQuietMs: 5_000, tripwireDelayMs: 250 });
+    mock.setText(sid, doneGrid("three parts", ["Part one."]));
+    mock.emitOutputChunk(sid);
+    // Wait for delivery, then sneak a late block onto the grid inside the tripwire window.
+    await waitFor(() => [...slack.posted.map((p) => p.text), ...slack.updated.map((u) => u.text)].some((t) => t.includes("Part one.")));
+    mock.setText(sid, doneGrid("three parts", ["Part one.", "The late haiku."]));
+    await turn;
+    const continued = slack.posted.find((p) => p.text.includes("…continued") && p.text.includes("The late haiku."));
+    expect(continued).toBeDefined();
     await handler.shutdown({ killSessions: true });
   }, 10_000);
 });

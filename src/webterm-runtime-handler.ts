@@ -16,7 +16,7 @@
 
 import type { WebClient } from "@slack/web-api";
 import { Logger } from "./logger";
-import { extractTurn, extractSegments, isGridIdle, formatTurnForSlack, extractActivity, type Segment } from "./webterm-claude-extractor";
+import { extractTurn, extractSegments, isGridIdle, formatTurnForSlack, extractActivity, hasTurnEndFooter, type Segment } from "./webterm-claude-extractor";
 
 const DEFAULT_WEBTERM_URL = "http://127.0.0.1:7681";
 const DEFAULT_CLAUDE_CMD = "claude --dangerously-skip-permissions";
@@ -84,6 +84,15 @@ const DEFAULT_STATUS_POLL_MS = 2_000;
 // limit even on long tool-heavy turns.
 const MIN_STATUS_UPDATE_MS = 1_500;
 const DEFAULT_IDLE_OUTPUT_FLOOR_MS = 250;
+// Turn-end hardening (claw-46g8): a stable-idle grid ends the turn fast only
+// with POSITIVE end evidence — claude's past-tense completion footer
+// ("✻ Cooked for 12s"). Without it, a frozen grid is treated as a mid-answer
+// model pause until this much quiet has elapsed (the live-verified haiku drop
+// was a ~3s pause that today's 2-poll rule mistook for done).
+const DEFAULT_TURN_END_QUIET_MS = 10_000;
+// After final delivery, re-extract once this much later and post anything the
+// relay missed — cheap insurance against any residual settle-detection gap.
+const DEFAULT_TRIPWIRE_DELAY_MS = 5_000;
 
 export interface WebtermRuntimeOpts {
   webtermUrl?: string;
@@ -118,6 +127,11 @@ export interface WebtermRuntimeOpts {
   // server's x-webterm-last-output-ms header exposes the fresh output. Servers
   // without the header skip the floor (backward compatible).
   idleOutputFloorMs?: number;
+  // Quiet window that ends a stable-idle turn WITHOUT the completion footer
+  // (claw-46g8). Tests set this small.
+  turnEndQuietMs?: number;
+  // Delay before the post-final tripwire re-extract (claw-46g8); 0 disables.
+  tripwireDelayMs?: number;
   // Direct-spawn argv (claw-3btg.1): when non-empty, sessions are created with
   // webterm's command[] option so the PTY child IS claude — no wrapping shell
   // to fall through to when claude dies (H1 becomes structural). argv[0] must
@@ -192,6 +206,8 @@ export class WebtermRuntimeHandler {
       turnPollMs: opts.turnPollMs ?? DEFAULT_TURN_POLL_MS,
       slidingInactivityMs: opts.slidingInactivityMs ?? DEFAULT_SLIDING_INACTIVITY_MS,
       idleOutputFloorMs: opts.idleOutputFloorMs ?? DEFAULT_IDLE_OUTPUT_FLOOR_MS,
+      turnEndQuietMs: opts.turnEndQuietMs ?? DEFAULT_TURN_END_QUIET_MS,
+      tripwireDelayMs: opts.tripwireDelayMs ?? DEFAULT_TRIPWIRE_DELAY_MS,
       directSpawnCommand: opts.directSpawnCommand ?? [],
       fetchImpl: opts.fetchImpl ?? fetch,
     };
@@ -430,17 +446,25 @@ export class WebtermRuntimeHandler {
         idleObservations = 0;
       }
       const stableIdle = idle && idleObservations >= IDLE_STABLE_POLLS;
+      // claw-46g8: stable idle alone is NOT the end of the turn — claude
+      // removes its spinner and renders the prompt box during multi-second
+      // mid-answer pauses (live-verified haiku drop). The turn ends only with
+      // positive end evidence (past-tense completion footer) or after a much
+      // longer quiet window.
+      const turnDone = stableIdle &&
+        (hasTurnEndFooter(grid, req.text) || Date.now() - lastChangeAt >= this.opts.turnEndQuietMs);
 
       // Post/grow NEW prose blocks. extractSegments filters tips/recap/spinner;
       // tool blocks advance the high-water mark only. Streaming grows the
       // trailing still-rendering block in place (Task 3); the trailing block
-      // only FINALIZES on stable idle, on the same tick the turn ends.
+      // only FINALIZES when the turn is provably done — finalization advances
+      // the high-water mark, which is unrepairable if the block was partial.
       ({ postedSegments, growingTs, growingIndex } = await this.relayNewSegments(
         session, req, grid, deliver, stopStatus,
-        { postedSegments, growingTs, growingIndex, streaming, stableIdle },
+        { postedSegments, growingTs, growingIndex, streaming, stableIdle: turnDone },
       ));
 
-      if (stableIdle) {
+      if (turnDone) {
         // stopStatus was called above at idleObservations === 1.
         if (postedSegments === 0) {
           // Idle but nothing extracted — fall back to the whole-turn extractor
@@ -449,6 +473,7 @@ export class WebtermRuntimeHandler {
           const text = turn ? formatTurnForSlack(turn) : "";
           await deliver(text || ":warning: claude did not produce a visible response.");
         }
+        await this.runTripwire(session, req, postedSegments);
         return;
       }
 
@@ -462,6 +487,37 @@ export class WebtermRuntimeHandler {
         if (postedSegments === 0) await deliver(":warning: claude stopped responding.");
         return;
       }
+    }
+  }
+
+  // Post-final safety net (claw-46g8): one delayed re-extract after delivery.
+  // If the grid grew past the delivered high-water mark, the settle detection
+  // was beaten — recover the remainder instead of silently losing it. Runs
+  // inside the turn (inFlight still held), so a queued next message can't
+  // interleave; its own extraction stops at any newer ❯ echo line anyway.
+  private async runTripwire(
+    session: WebtermSession,
+    req: HandleMessageOpts,
+    deliveredSegments: number,
+  ): Promise<void> {
+    if (this.opts.tripwireDelayMs <= 0) return;
+    await sleep(this.opts.tripwireDelayMs);
+    if (!session.alive) return;
+    let grid: string;
+    try {
+      ({ grid } = await this.fetchGridForRelay(session.id, req.text));
+    } catch {
+      return;
+    }
+    const segments = extractSegments(grid, req.text);
+    const missed = segments.slice(deliveredSegments).filter((seg) => seg.kind === "prose");
+    if (missed.length === 0) return;
+    this.logger.warn("tripwire recovered post-final content", {
+      sessionId: session.id,
+      blocks: missed.length,
+    });
+    for (const seg of missed) {
+      await this.postReply(req, `_(…continued)_\n${seg.text}`);
     }
   }
 
