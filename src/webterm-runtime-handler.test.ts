@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { WebtermRuntimeHandler, shellSingleQuote, decodeSlackEntities } from "./webterm-runtime-handler";
+import { ThreadSessionStore } from "./thread-session-store";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
@@ -1268,6 +1269,53 @@ describe("live-activity streaming (claw-1ta5)", () => {
     expect(slack.textOf("msg-1")).toContain("Done.");
     expect(slack.posted).toHaveLength(1);
   });
+
+  it("throttles the growing-block chat.update path to MIN_STATUS_UPDATE_MS (claw-uu2u A1)", async () => {
+    // Large turnPollMs/statusPollMs so only emitOutputChunk drives the relay
+    // loop — isolates the SSE-cadence wake path A1 targets (real webterm
+    // fires output-chunk on ~50ms flush, which is what made the growing
+    // branch fire several times/sec before this fix).
+    const throttleHandler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
+      turnEndQuietMs: 150,
+      tripwireDelayMs: 10,
+      webtermUrl: "http://test.local",
+      fetchImpl: mock.fetchImpl,
+      cwd: "/tmp/test",
+      pasteSettleMs: 5,
+      extractStableMs: 10,
+      turnPollMs: 60_000,
+      streamStatus: true,
+      statusPollMs: 10,
+    });
+    const handlePromise = throttleHandler.handleMessage({ channelId: "C1", threadTs: "T1", text: "stream please", slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+    expect(slack.posted).toHaveLength(1); // placeholder only
+
+    // 10 rapid ticks (~15ms apart, well inside the 1500ms throttle floor) —
+    // each changes the trailing block's text, so an unthrottled relay would
+    // chat.update on every one.
+    for (let i = 1; i <= 10; i++) {
+      mock.setText(id, ["❯ stream please", "", `⏺ Growing block tick ${i}...`].join("\n"));
+      mock.emitOutputChunk(id);
+      await sleep(15);
+    }
+
+    const growUpdatesDuringBurst = slack.updated.filter((u) => u.ts === "msg-1").length;
+    expect(growUpdatesDuringBurst).toBeGreaterThan(0); // the first tick still gets through
+    expect(growUpdatesDuringBurst).toBeLessThanOrEqual(3); // throttled well below the 10 ticks fired
+
+    // Finalize — the FINAL text must land exactly regardless of the throttle
+    // (the finalize/deliver paths bypass it).
+    mock.setText(id, buildTurnGrid("stream please", "Growing block tick 10... Done."));
+    mock.emitPromptReady(id);
+    await handlePromise;
+    expect(slack.textOf("msg-1")).toContain("Growing block tick 10... Done.");
+  });
 });
 
 // claw-gxzq trailing-body drop (2026-07-03): 200ms frame captures of a live
@@ -2163,6 +2211,64 @@ describe("session resume across reaps (claw-m7bj, claw-8262)", () => {
     await handler.shutdown({ killSessions: true });
   }, 10_000);
 
+  it("concurrent turns racing a pending bootNotice do not interleave PTY pastes (claw-uu2u A2)", async () => {
+    const storePath = freshStorePath();
+    const mock = makeMockWebterm();
+    const slack = makeSlack();
+    const mkHandler = (check: boolean) => new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10,
+      sessionStorePath: storePath,
+      resumeFileCheck: () => check,
+      directSpawnCommand: ["/usr/local/bin/claude"],
+    });
+    // First process seeds the store with a "prior" claude session uuid.
+    let handler = mkHandler(true);
+    const t1 = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "hi", slack: slack.client });
+    const sid1 = await driveBoot(mock);
+    await finishTurn(mock, sid1, "hi", "hello!");
+    await t1;
+    await handler.shutdown({ killSessions: true });
+
+    mock.sessions.clear();
+    mock.calls.length = 0;
+    // Second process: the session file is gone (bot restarted, thread's
+    // earlier conversation expired) — createSession sets bootNotice on the
+    // ONE session both callers share via creationInFlight de-dup, and two
+    // messages race in before either can claim inFlight (claw-uu2u A2).
+    handler = mkHandler(false);
+    const reqA = { channelId: "C1", threadTs: "1.0", text: "turn A", slack: slack.client };
+    const reqB = { channelId: "C1", threadTs: "1.0", text: "turn B", slack: slack.client };
+    const pA = handler.handleMessage(reqA);
+    const pB = handler.handleMessage(reqB);
+    const sid2 = await driveBoot(mock);
+
+    // Whichever of A/B claims first, its paste lands — but the SECOND paste
+    // must not land until the first turn's reply has been delivered. A
+    // buggy build lets both slip through the claim window together (the
+    // bootNotice postReply await sits between the inFlight check and claim).
+    await waitFor(() => mock.sessions.get(sid2)!.inputs.some((i) => i.kind === "paste"));
+    await sleep(30); // room for a buggy build to let the second paste slip in
+    expect(mock.sessions.get(sid2)!.inputs.filter((i) => i.kind === "paste")).toHaveLength(1);
+
+    const firstText = mock.sessions.get(sid2)!.inputs.find((i) => i.kind === "paste")!.data as string;
+    await finishTurn(mock, sid2, firstText, "reply one");
+    await waitFor(() => slack.posted.some((m) => m.text.includes("reply one")));
+
+    // Only now should the second turn's paste land.
+    await waitFor(() => mock.sessions.get(sid2)!.inputs.filter((i) => i.kind === "paste").length === 2);
+    const secondText = mock.sessions.get(sid2)!.inputs.filter((i) => i.kind === "paste")[1].data as string;
+    await finishTurn(mock, sid2, secondText, "reply two");
+
+    await Promise.all([pA, pB]);
+    const pastes = mock.sessions.get(sid2)!.inputs.filter((i) => i.kind === "paste").map((i) => i.data);
+    expect(pastes).toEqual(["turn A", "turn B"]);
+    // Only ONE bootNotice — not one per racing claimant.
+    expect(slack.posted.filter((m) => m.text.includes("the earlier conversation expired"))).toHaveLength(1);
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+
   it("a failed resume boot falls back to a fresh session with a notice", async () => {
     const storePath = freshStorePath();
     const mock = makeMockWebterm();
@@ -2205,6 +2311,60 @@ describe("session resume across reaps (claw-m7bj, claw-8262)", () => {
     expect(slack.posted.some((m) => m.text.includes("couldn't resume the earlier conversation"))).toBe(true);
     await handler.shutdown({ killSessions: true });
   }, 15_000);
+
+  it("a failed session POST during resume rethrows without touching the thread→session mapping (claw-uu2u A6)", async () => {
+    const storePath = freshStorePath();
+    const mock = makeMockWebterm();
+    const slack = makeSlack();
+    let createAttempts = 0;
+    const mkHandler = (failCreate: boolean) => {
+      const fetchImpl: typeof fetch = async (input, init) => {
+        const url = typeof input === "string" ? input : (input as URL).toString();
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (method === "POST" && url.endsWith("/api/sessions")) createAttempts++;
+        if (failCreate && method === "POST" && url.endsWith("/api/sessions")) {
+          return new Response("webterm unavailable", { status: 500 });
+        }
+        return mock.fetchImpl(input, init);
+      };
+      return new WebtermRuntimeHandler({
+        webtermUrl: "http://test.local", fetchImpl, cwd: "/tmp/t",
+        pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+        turnEndQuietMs: 150, tripwireDelayMs: 10,
+        sessionStorePath: storePath,
+        resumeFileCheck: () => true,
+        directSpawnCommand: ["/usr/local/bin/claude"],
+      });
+    };
+    // First process seeds the store with a "prior" claude session uuid.
+    let handler = mkHandler(false);
+    const t1 = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "hi", slack: slack.client });
+    const sid1 = await driveBoot(mock);
+    await finishTurn(mock, sid1, "hi", "hello!");
+    await t1;
+    await handler.shutdown({ killSessions: true });
+    const uuidBefore = new ThreadSessionStore(storePath).get("C1::1.0");
+    expect(uuidBefore).toBeDefined();
+
+    mock.sessions.clear();
+    mock.calls.length = 0;
+    createAttempts = 0;
+    // Second process: the resume attempt's session POST fails outright (a
+    // webterm outage) — bootSession's own "createSession <status>" throw is
+    // NOT resume-attributable, so it must rethrow rather than fall back to a
+    // fresh session, and the store must stay untouched (claw-uu2u A6): a
+    // transient webterm outage must not permanently overwrite the mapping.
+    handler = mkHandler(true);
+    await handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "again", slack: slack.client });
+
+    expect(slack.posted.some((m) => m.text.includes("webterm session creation failed"))).toBe(true);
+    expect(slack.posted.some((m) => m.text.includes("fresh session"))).toBe(false);
+    const uuidAfter = new ThreadSessionStore(storePath).get("C1::1.0");
+    expect(uuidAfter).toBe(uuidBefore);
+    // No fresh-session fallback boot was attempted — exactly the one failed POST.
+    expect(createAttempts).toBe(1);
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
 });
 
 describe("images out (claw-ynzo)", () => {

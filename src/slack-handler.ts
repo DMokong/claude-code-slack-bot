@@ -76,6 +76,16 @@ export function parseEngineCommand(
   return 'unknown';
 }
 
+/**
+ * Does this webterm-routed message mean "interrupt the running turn"
+ * (claw-fs45) rather than a prompt to type into the REPL? `text` is
+ * undefined for files-only messages (claw-uu2u A3) — that must read as
+ * "not a stop command", not crash on `.trim()`.
+ */
+export function isStopCommand(text: string | undefined): boolean {
+  return /^(stop|abort|esc)$/i.test((text ?? '').trim());
+}
+
 function isRateLimitError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const msg = error.message.toLowerCase();
@@ -191,10 +201,10 @@ export class SlackHandler {
       (config.webterm.routeAll || config.webterm.channels.includes(channel)) &&
       // Bot-level commands (cwd set/get, mcp info/reload) must fall through
       // to their handlers below — routeAll was swallowing them into claude.
-      !this.workingDirManager.parseSetCommand(text) &&
-      !this.workingDirManager.isGetCommand(text) &&
-      !this.isMcpInfoCommand(text) &&
-      !this.isMcpReloadCommand(text)
+      !this.workingDirManager.parseSetCommand(text ?? '') &&
+      !this.workingDirManager.isGetCommand(text ?? '') &&
+      !this.isMcpInfoCommand(text ?? '') &&
+      !this.isMcpReloadCommand(text ?? '')
     ) {
       const isDM = channel.startsWith('D');
       // Files ride into the warm session (claw-ynzo): download them and hand
@@ -208,15 +218,37 @@ export class SlackHandler {
           const listing = processed.map((f) => f.path).join(', ');
           webtermText = `[Attached files: ${listing}]\n\n${webtermText}`.trim();
         }
+        if (processed.length < files.length) {
+          // A download failure must not be silent (claw-uu2u A5) — best-effort
+          // notice, guarded the same as the stop-command ack below.
+          try {
+            await say({
+              text: `:warning: couldn't fetch ${files.length - processed.length} of ${files.length} attachment(s) — answering with what came through.`,
+              thread_ts: thread_ts || ts,
+            });
+          } catch (error) {
+            this.logger.warn('Failed to post attachment-download warning', error);
+          }
+        }
+      }
+      if (!webtermText.trim()) {
+        // Every file failed to download and there's no text either — nothing
+        // to route. The warning above (if any) already told the thread why;
+        // routing an empty prompt would just paste blank input into the PTY.
+        return;
       }
       // "stop" in a webterm-routed thread interrupts the running turn
       // (claw-fs45) instead of being typed into the REPL as a prompt.
-      if (/^(stop|abort|esc)$/i.test(text.trim())) {
+      if (isStopCommand(text)) {
         const stopped = await this.webtermRuntime.abortTurn(channel, thread_ts || ts);
-        await say({
-          text: stopped ? '🛑 stopped' : 'nothing running in this thread to stop',
-          thread_ts: thread_ts || ts,
-        });
+        try {
+          await say({
+            text: stopped ? '🛑 stopped' : 'nothing running in this thread to stop',
+            thread_ts: thread_ts || ts,
+          });
+        } catch (error) {
+          this.logger.warn('Failed to post stop-command acknowledgement', error);
+        }
         return;
       }
       this.logger.debug('Routing to webterm runtime', { channel, thread_ts: thread_ts || ts });

@@ -323,14 +323,25 @@ export class WebtermRuntimeHandler {
         await this.killWebtermSession(session.id).catch(() => {});
         continue;
       }
+      // The isRunningClaude await above is itself a window a second queued
+      // caller can slip through (both saw inFlight === null before either
+      // awaited) — re-check right before claiming (claw-uu2u A2).
+      if (session.inFlight) continue;
       session.freshlyBooted = false;
 
-      if (session.bootNotice) {
-        await this.postReply(req, session.bootNotice);
-        session.bootNotice = undefined;
-      }
-
-      const turnPromise = this.takeTurn(session, req);
+      // Claim SYNCHRONOUSLY: no await between the check above and this
+      // assignment, or a second caller can observe inFlight still null and
+      // claim alongside us, pasting into the same PTY concurrently. The
+      // bootNotice post moves inside the wrapper (and clears the field before
+      // its own await) so it can't reopen that gap either.
+      const turnPromise = (async () => {
+        if (session.bootNotice) {
+          const notice = session.bootNotice;
+          session.bootNotice = undefined;
+          await this.postReply(req, notice);
+        }
+        await this.takeTurn(session, req);
+      })();
       session.inFlight = turnPromise.then(() => {}, () => {});
       try {
         await turnPromise;
@@ -459,6 +470,13 @@ export class WebtermRuntimeHandler {
     // placeholder is unbound (available for the first delivered block).
     let growingTs: string | undefined = statusTs;
     let growingIndex = -1;
+    // Grow-update throttle (claw-uu2u A1): waitForTurnSignal now wakes on
+    // every SSE output-chunk (~50ms cadence), so without this the growing
+    // branch below can chat.update several times/sec — past Slack's ~50/min
+    // tier. Finalize/deliver paths bypass this; only the in-place grow writes
+    // are throttled.
+    let lastGrowText = "";
+    let lastGrowUpdateAt = 0;
     const streaming = this.streamEnabled(req);
 
     for (;;) {
@@ -537,9 +555,9 @@ export class WebtermRuntimeHandler {
       // trailing still-rendering block in place (Task 3); the trailing block
       // only FINALIZES when the turn is provably done — finalization advances
       // the high-water mark, which is unrepairable if the block was partial.
-      ({ postedSegments, growingTs, growingIndex } = await this.relayNewSegments(
+      ({ postedSegments, growingTs, growingIndex, lastGrowText, lastGrowUpdateAt } = await this.relayNewSegments(
         session, req, grid, deliver, stopStatus,
-        { postedSegments, growingTs, growingIndex, streaming, stableIdle: turnDone },
+        { postedSegments, growingTs, growingIndex, streaming, stableIdle: turnDone, lastGrowText, lastGrowUpdateAt },
       ));
       deliveredSegments = postedSegments;
 
@@ -888,9 +906,25 @@ export class WebtermRuntimeHandler {
     grid: string,
     deliver: (text: string) => Promise<void>,
     stopStatus: () => Promise<void>,
-    state: { postedSegments: number; growingTs: string | undefined; growingIndex: number; streaming: boolean; stableIdle: boolean },
-  ): Promise<{ postedSegments: number; growingTs: string | undefined; growingIndex: number }> {
-    let { postedSegments, growingTs, growingIndex } = state;
+    state: {
+      postedSegments: number;
+      growingTs: string | undefined;
+      growingIndex: number;
+      streaming: boolean;
+      stableIdle: boolean;
+      // Grow-update throttle state (claw-uu2u A1) — see the finalize/grow
+      // split below for which writes it gates.
+      lastGrowText: string;
+      lastGrowUpdateAt: number;
+    },
+  ): Promise<{
+    postedSegments: number;
+    growingTs: string | undefined;
+    growingIndex: number;
+    lastGrowText: string;
+    lastGrowUpdateAt: number;
+  }> {
+    let { postedSegments, growingTs, growingIndex, lastGrowText, lastGrowUpdateAt } = state;
     const segments = extractSegments(grid, req.text);
     const settled = state.stableIdle ? segments.length : Math.max(0, segments.length - 1);
 
@@ -898,7 +932,7 @@ export class WebtermRuntimeHandler {
       for (let i = postedSegments; i < settled; i++) {
         if (segments[i].kind === "prose") await this.postReply(req, formatForSlack(segments[i].text));
       }
-      return { postedSegments: Math.max(postedSegments, settled), growingTs, growingIndex };
+      return { postedSegments: Math.max(postedSegments, settled), growingTs, growingIndex, lastGrowText, lastGrowUpdateAt };
     }
 
     // Is the held-back trailing block a still-rendering prose block to grow?
@@ -944,26 +978,44 @@ export class WebtermRuntimeHandler {
     // 2) Grow the trailing still-rendering prose block, if any.
     if (trailingIsGrowingProse) {
       const text = formatForSlack(segments[trailingIdx].text);
+      // Throttle (claw-uu2u A1): waitForTurnSignal now wakes on every SSE
+      // output-chunk (~50ms cadence), so this branch can be entered several
+      // times/sec — well past Slack's chat.update rate limit. Only spend a
+      // write when the text actually changed and the floor has elapsed; the
+      // finalize loop above and deliver() are NOT gated by this, so the last
+      // delta of a block always lands regardless of the throttle.
+      const canGrowUpdate = text !== lastGrowText && Date.now() - lastGrowUpdateAt >= MIN_STATUS_UPDATE_MS;
       if (growingIndex === trailingIdx) {
-        // Already tracking this block. Update it if we have a ts; if the fresh
-        // post below previously failed (no ts, e.g. a Slack outage) do NOT spam
-        // a new message every tick — leave it to finalize via the finalize loop
-        // once it settles (Fix 3).
-        if (growingTs) await this.updateStreamMessage(req, growingTs, text);
+        // Already tracking this block. Update it if we have a ts and the
+        // throttle allows; if the fresh post below previously failed (no ts,
+        // e.g. a Slack outage) do NOT spam a new message every tick — leave
+        // it to finalize via the finalize loop once it settles (Fix 3).
+        if (growingTs && canGrowUpdate) {
+          await this.updateStreamMessage(req, growingTs, text);
+          lastGrowText = text;
+          lastGrowUpdateAt = Date.now();
+        }
       } else if (growingTs && growingIndex === -1) {
         // Bind the placeholder to this growing block.
         growingIndex = trailingIdx;
-        await this.updateStreamMessage(req, growingTs, text);
+        if (canGrowUpdate) {
+          await this.updateStreamMessage(req, growingTs, text);
+          lastGrowText = text;
+          lastGrowUpdateAt = Date.now();
+        }
       } else {
         // Open a fresh message for this growing block. Bind growingIndex even if
         // the post returned no ts, so the branch above suppresses re-posting on
-        // subsequent ticks (Fix 3).
+        // subsequent ticks (Fix 3). A fresh message only opens once per block
+        // transition, not on a throttle cadence, so it bypasses canGrowUpdate.
         growingTs = await this.postFreshStreamMessage(req, text);
         growingIndex = trailingIdx;
+        lastGrowText = text;
+        lastGrowUpdateAt = Date.now();
       }
     }
 
-    return { postedSegments, growingTs, growingIndex };
+    return { postedSegments, growingTs, growingIndex, lastGrowText, lastGrowUpdateAt };
   }
 
   // Post a brand-new streamed message and return its ts (best-effort; returns
@@ -1151,10 +1203,23 @@ export class WebtermRuntimeHandler {
         this.logger.info("Resumed thread conversation", { threadKey, claudeSession: prior });
         return session;
       } catch (err) {
-        this.logger.warn("Resume boot failed — falling back to a fresh session", {
-          threadKey,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        const msg = err instanceof Error ? err.message : String(err);
+        // A webterm outage during the POST (bootSession's own createSession
+        // throw, always prefixed "createSession") isn't attributable to the
+        // resume attempt — falling back here would overwrite the thread's
+        // mapping over a transient outage that has nothing to do with the
+        // saved uuid. Only a failure AFTER a successful POST (handshake
+        // timeout, missing chrome, trust-dialog loop) is plausibly
+        // resume-attributable and safe to treat as "the resume didn't work"
+        // (claw-uu2u A6).
+        if (msg.startsWith("createSession")) {
+          this.logger.warn("Resume boot's session POST failed — leaving the thread→session mapping untouched", {
+            threadKey,
+            error: msg,
+          });
+          throw err;
+        }
+        this.logger.warn("Resume boot failed — falling back to a fresh session", { threadKey, error: msg });
         const fresh = this.store.assign(threadKey);
         const session = await this.bootSession(threadKey, channelId, threadTs, cwd, ["--session-id", fresh]);
         session.bootNotice = "_(fresh session — couldn't resume the earlier conversation)_";
