@@ -22,6 +22,7 @@ function makeMockWebterm() {
     exitCode?: number | null;
   }>();
   const calls: { method: string; url: string; body?: any }[] = [];
+  const flags = { waitSupported: true };
 
   const fetchImpl: typeof fetch = async (input, init) => {
     const url = typeof input === "string" ? input : (input as URL).toString();
@@ -96,6 +97,7 @@ function makeMockWebterm() {
     }
     const mWait = url.match(/\/api\/sessions\/([^\/?]+)\/wait/);
     if (method === "GET" && mWait) {
+      if (!flags.waitSupported) return new Response("not found", { status: 404 });
       const id = mWait[1];
       const s = sessions.get(id);
       if (!s) return new Response("not found", { status: 404 });
@@ -141,6 +143,13 @@ function makeMockWebterm() {
       const s = sessions.get(sessionId);
       if (!s?.sseController) throw new Error(`no SSE controller for ${sessionId}`);
       const payload = `event: prompt-ready\ndata: {"stableForMs":800,"polls":3}\n\n`;
+      s.sseController.enqueue(new TextEncoder().encode(payload));
+    },
+    flags,
+    emitOutputChunk(sessionId: string, data = "x") {
+      const s = sessions.get(sessionId);
+      if (!s?.sseController) throw new Error(`no SSE controller for ${sessionId}`);
+      const payload = `event: output-chunk\ndata: ${JSON.stringify({ data })}\n\n`;
       s.sseController.enqueue(new TextEncoder().encode(payload));
     },
     emitExit(sessionId: string, code: number) {
@@ -1617,3 +1626,55 @@ async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+describe("SSE gate + event-driven wake (claw-kdqv, claw-rr2x)", () => {
+  it("subscribes with the etj7 activity-gate params", async () => {
+    const mock = makeMockWebterm();
+    const slack = makeSlack();
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+    });
+    const turn = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "hi", slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const sid = mock.onlySessionId();
+    mock.setText(sid, buildBootGrid());
+    mock.emitPromptReady(sid);
+    await waitFor(() => mock.sessions.get(sid)!.inputs.some((i) => i.kind === "paste"));
+    mock.setText(sid, buildTurnGrid("hi", "hello there"));
+    mock.emitPromptReady(sid);
+    await turn;
+    const sseCall = mock.calls.find((c) => c.url.includes("/events"));
+    expect(sseCall).toBeDefined();
+    expect(sseCall!.url).toContain("promptReadyMinChangesAfterInput=2");
+    expect(sseCall!.url).toContain("promptReadyMaxQuietMs=5000");
+    await handler.shutdown({ killSessions: true });
+  });
+
+  it("output-chunk SSE wakes the turn loop when /wait is unsupported", async () => {
+    const mock = makeMockWebterm();
+    mock.flags.waitSupported = false;
+    const slack = makeSlack();
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      // Poll timer far beyond the test timeout: only an SSE wake can finish this turn fast.
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 8_000, reapIntervalMs: 0,
+    });
+    const turn = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "hi", slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const sid = mock.onlySessionId();
+    mock.setText(sid, buildBootGrid());
+    mock.emitPromptReady(sid);
+    await waitFor(() => mock.sessions.get(sid)!.inputs.some((i) => i.kind === "paste"));
+    mock.setText(sid, buildTurnGrid("hi", "hello there"));
+    mock.emitOutputChunk(sid);
+    // Idle-confirmation waits use min(turnPollMs, extractStableMs)=10ms, so the
+    // only long sleep is the FIRST wait — which output-chunk must break.
+    await Promise.race([
+      turn,
+      new Promise((_, rej) => setTimeout(() => rej(new Error("turn did not complete — SSE wake missing")), 4_000)),
+    ]);
+    expect(slack.posted.length + slack.updated.length).toBeGreaterThan(0);
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+});

@@ -132,6 +132,10 @@ interface WebtermSession {
   id: string;
   threadKey: string;
   promptReadyCount: number;
+  // Bumped on every SSE output-chunk/idle event (claw-rr2x): the turn loop
+  // wakes on this instead of sleeping out its poll tick, so re-extraction
+  // follows the PTY's own output cadence (~50ms flush) rather than 1.5s polls.
+  outputEventCount: number;
   sseAbort: AbortController;
   ssePromise: Promise<void>;
   alive: boolean;
@@ -348,6 +352,13 @@ export class WebtermRuntimeHandler {
     let lastGrid = "";
     let lastChangeAt = Date.now();
     let lastBaseline = session.promptReadyCount;
+    // Output-event high-water mark (claw-rr2x), advanced only when the loop
+    // consumes it — an event landing between grid fetch and the next wait
+    // still wakes that wait. Starts at 0, not the current count: any event
+    // since session start makes the first wait poll immediately, which costs
+    // one no-op extraction and can never strand a wake (the echo/response
+    // chunks race the baseline capture otherwise).
+    let lastOutputEvents = 0;
     // Server-side mutation seq from the last /text fetch (claw-3btg.3): lets
     // the loop wake on GET /wait the moment the grid changes instead of
     // sleeping a full poll tick. -1 = not yet known.
@@ -367,8 +378,9 @@ export class WebtermRuntimeHandler {
       const waitMs = idleObservations > 0
         ? Math.min(this.opts.turnPollMs, this.opts.extractStableMs)
         : this.opts.turnPollMs;
-      await this.waitForTurnSignal(session, lastBaseline + 1, lastSeq, waitMs);
+      await this.waitForTurnSignal(session, lastBaseline + 1, lastSeq, waitMs, lastOutputEvents);
       lastBaseline = session.promptReadyCount;
+      lastOutputEvents = session.outputEventCount;
       if (!session.alive) {
         await stopStatus();
         // Deliver whatever we have; warn only if nothing was posted. The
@@ -463,6 +475,9 @@ export class WebtermRuntimeHandler {
     target: number,
     sinceSeq: number,
     ms: number,
+    // Wake immediately when outputEventCount differs from this mark; -1
+    // disables the check (callers that don't track events).
+    sinceOutputEvents = -1,
   ): Promise<void> {
     const deadline = Date.now() + ms;
     const ctl = new AbortController();
@@ -480,6 +495,7 @@ export class WebtermRuntimeHandler {
       for (;;) {
         if (!session.alive) return;
         if (session.promptReadyCount >= target) return;
+        if (sinceOutputEvents >= 0 && session.outputEventCount !== sinceOutputEvents) return;
         if (serverWoke) return;
         if (Date.now() >= deadline) return;
         await sleep(50);
@@ -849,6 +865,7 @@ export class WebtermRuntimeHandler {
       id: match.id,
       threadKey,
       promptReadyCount: 0,
+      outputEventCount: 0,
       sseAbort: new AbortController(),
       ssePromise: Promise.resolve(),
       alive: true,
@@ -889,6 +906,7 @@ export class WebtermRuntimeHandler {
       id: body.id,
       threadKey,
       promptReadyCount: 0,
+      outputEventCount: 0,
       sseAbort,
       ssePromise: Promise.resolve(),
       alive: true,
@@ -917,7 +935,13 @@ export class WebtermRuntimeHandler {
       `?idleMs=${DEFAULT_IDLE_MS}` +
       `&promptReady=true` +
       `&promptReadyPollMs=${DEFAULT_PROMPT_POLL_MS}` +
-      `&promptReadyStablePolls=${DEFAULT_PROMPT_STABLE_POLLS}`;
+      `&promptReadyStablePolls=${DEFAULT_PROMPT_STABLE_POLLS}` +
+      // claw-etj7's activity gate, server-shipped but consumer-opt-in: a
+      // prompt-ready needs >=2 normalized grid changes after input (echo +
+      // response), with a 5s quiet-liveness override. Kills the echo-only
+      // false fire this bot used to run with (claw-kdqv).
+      `&promptReadyMinChangesAfterInput=2` +
+      `&promptReadyMaxQuietMs=5000`;
     try {
       const res = await this.authedFetch(url, {
         headers: { accept: "text/event-stream" },
@@ -940,6 +964,7 @@ export class WebtermRuntimeHandler {
             if (line.startsWith("event:")) event = line.slice(6).trim();
           }
           if (event === "prompt-ready") session.promptReadyCount++;
+          else if (event === "output-chunk" || event === "idle") session.outputEventCount++;
           else if (event === "exit") {
             session.alive = false;
             this.logger.info("Webterm session exited", { sessionId: session.id });
