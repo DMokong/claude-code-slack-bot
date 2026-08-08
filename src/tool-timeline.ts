@@ -6,6 +6,25 @@
 
 import { TOOL_CALL_RE, TOOL_LABELS } from "./webterm-claude-extractor";
 
+const PROMPT_MARKER = "❯ ";
+
+// Locate the last "❯ " line whose content matches or prefixes `marker` (same
+// tolerant idea as the extractor's findLastUserEcho: exact trimmed match, or
+// a prompt-marker-prefixed row for input wider than the terminal). Returns -1
+// if no such line is on screen.
+function findLastMatchingEcho(lines: string[], marker: string): number {
+  const target = PROMPT_MARKER + marker;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    const trimmed = line.trimEnd();
+    if (trimmed === target.trimEnd() || trimmed === target) return i;
+    if (line.startsWith(PROMPT_MARKER) && line.startsWith(target.slice(0, line.length))) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 export class ToolTimeline {
   // Raw "Tool(args…)" line → seen. Grid lines persist across polls, so line
   // identity is the dedupe key; a genuinely repeated identical call on screen
@@ -13,9 +32,26 @@ export class ToolTimeline {
   private seen = new Set<string>();
   private labels: string[] = [];
 
+  // sinceMarker (claw-uu2u B3): the user's input text for THIS turn. Grids
+  // for multi-turn sessions still show earlier turns' "⏺ Tool(...)" lines
+  // above the current one; without a scope, observe() would count those too
+  // and inflate this turn's trail/recap. When set, only tool lines after the
+  // LAST echo of this marker count. Left undefined, observe() scans the
+  // whole grid (unscoped, the pre-fix behavior).
+  constructor(private readonly sinceMarker?: string) {}
+
   observe(gridText: string): void {
-    for (const raw of gridText.split("\n")) {
-      const line = raw.trim();
+    const lines = gridText.split("\n");
+    let from = 0;
+    if (this.sinceMarker !== undefined) {
+      const echoLine = findLastMatchingEcho(lines, this.sinceMarker);
+      // Marker not on screen — count nothing rather than risk scanning past
+      // turn boundaries we can't locate.
+      if (echoLine === -1) return;
+      from = echoLine + 1;
+    }
+    for (let i = from; i < lines.length; i++) {
+      const line = lines[i].trim();
       const m = TOOL_CALL_RE.exec(line);
       if (!m) continue;
       if (this.seen.has(line)) continue;

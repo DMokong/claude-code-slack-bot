@@ -21,6 +21,12 @@ describe("toMrkdwn", () => {
     expect(toMrkdwn("run `npm **test**` now")).toBe("run `npm **test**` now");
   });
 
+  it("converts links and inline code inside a header but drops nested bold (claw-uu2u B5)", () => {
+    expect(toMrkdwn("## See [docs](https://example.com) **now**")).toBe(
+      "*See <https://example.com|docs> now*",
+    );
+  });
+
   it("leaves fenced code blocks untouched", () => {
     const fenced = "```\nconst x = **not bold**;\n```";
     expect(toMrkdwn(fenced)).toBe(fenced);
@@ -81,6 +87,21 @@ describe("refenceCode", () => {
   it("does not fence a single code-ish line", () => {
     const single = "Use compute() for that.";
     expect(refenceCode(single)).toBe(single);
+  });
+
+  it("does not fence bold prose lines using '=>' as informal notation (claw-uu2u B1)", () => {
+    const prose = "**Routing:** slack => bot => webterm\n**Fallback:** bot => sdk";
+    expect(refenceCode(prose)).toBe(prose);
+  });
+
+  it("does not fence flush-left prose sentences that mention function calls (claw-uu2u B1)", () => {
+    const prose = "The bug is in parseStatusRow()\nThe fix belongs in extractTurn()";
+    expect(refenceCode(prose)).toBe(prose);
+  });
+
+  it("fences a flush-left arrow-function assignment run (true positive)", () => {
+    const input = "const f = (x) => x * 2\nconst g = (y) => y * 3";
+    expect(refenceCode(input)).toBe("```\nconst f = (x) => x * 2\nconst g = (y) => y * 3\n```");
   });
 });
 

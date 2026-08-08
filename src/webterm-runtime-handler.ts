@@ -394,7 +394,7 @@ export class WebtermRuntimeHandler {
     // Tool timeline + cost bookkeeping (claw-zlr4/claw-s5k5): every grid this
     // turn sees feeds the timeline; the status row is captured at both ends of
     // the turn so the recap and the turn log can report the cost delta.
-    const timeline = new ToolTimeline();
+    const timeline = new ToolTimeline(req.text);
     const turnStartedAt = Date.now();
     let statusAtStart: ParsedStatusRow | null = null;
     let statusAtEnd: ParsedStatusRow | null = null;

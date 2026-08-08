@@ -39,7 +39,7 @@ const SPINNER_GLYPHS = "✻✶✳✢✽⠂⠐⠈⠁·";
 // content. Each rule is independent; a line matching ANY rule is dropped.
 const CHROME_RULES: RegExp[] = [
   /^\s*─{4,}\s*$/,                                          // horizontal rules between regions
-  /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+[smh](?:\s*\d+[smh])?(?:\s*·.*)?$/, // spinner: "✻ Cooked for 3s" / "✻ Churned for 13s · 1 shell still running"
+  /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+[smh](?:\s*\d+[smh])*(?:\s*·.*)?$/, // spinner: "✻ Cooked for 3s" / "✻ Worked for 1h 2m 14s" / "✻ Churned for 13s · 1 shell still running"
   /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+ing…\s*$/,                         // spinner: "✻ Pondering…" / "· Frolicking…"
   /^\s*(Opus|Fable|Sonnet|Haiku|Mythos)\s+\d/,              // model status row (any model)
   /^\s*[●○]\s+(high|medium|low)\b/,                          // effort indicator
@@ -74,7 +74,7 @@ function isPromptLine(t: string, bareMarker: string): boolean {
 
 // Suffix-tolerant (claw-prf6): the live spinner carries trailers like
 // "· 1 shell still running" after the duration.
-const SPINNER_FOR_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+[smh](?:\s*\d+[smh])?(?:\s*·.*)?$/;
+const SPINNER_FOR_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+[smh](?:\s*\d+[smh])*(?:\s*·.*)?$/;
 // claw-gxzq: no EOL anchor — the live spinner usually carries a suffix after
 // the ellipsis ("✳ Nesting… (5s · ↓ 205 tokens)"); an anchored match only saw
 // the bare "✻ Pouncing…" form and let the suffixed form leak into prose.
@@ -461,10 +461,15 @@ export function isGridIdle(gridText: string, opts: ExtractOptions = {}): boolean
 // only in accepting minute-form durations. Used as END EVIDENCE by the relay
 // (claw-46g8): a frozen idle grid WITHOUT this line is more likely a
 // mid-answer model pause than a finished turn — the live-verified haiku drop.
-const PAST_SPINNER_RE = new RegExp(`^[${SPINNER_GLYPHS}]\\s+\\S+(?:ing|ed)\\s+for\\s+[\\d]+[smh](?:\\s*[\\d]+[smh])?(?:\\s*·.*)?$`);
+const PAST_SPINNER_RE = new RegExp(`^[${SPINNER_GLYPHS}]\\s+\\S+(?:ing|ed)\\s+for\\s+[\\d]+[smh](?:\\s*[\\d]+[smh])*(?:\\s*·.*)?$`);
 
 // True iff a past-tense spinner appears BELOW the last user echo — i.e. the
 // current turn (not a previous one) has rendered its completion footer.
+// Scans from echoEnd+1 (not echoStart+1): a multi-line echoed user message
+// can quote spinner-shaped text on one of its continuation rows (e.g. "✻
+// Cooked for 3s" pasted as part of the question), and scanning from
+// echoStart+1 would count that quoted line as end evidence for a turn that
+// hasn't produced any footer yet (claw-uu2u B4).
 export function hasTurnEndFooter(
   gridText: string,
   userInputText: string,
@@ -474,7 +479,8 @@ export function hasTurnEndFooter(
   const lines = gridText.split("\n");
   const echoStart = findLastUserEcho(lines, userInputText, promptMarker);
   if (echoStart === -1) return false;
-  for (let i = echoStart + 1; i < lines.length; i++) {
+  const echoEnd = findEchoEnd(lines, echoStart, userInputText, promptMarker);
+  for (let i = echoEnd + 1; i < lines.length; i++) {
     if (PAST_SPINNER_RE.test(lines[i].trim())) return true;
   }
   return false;
@@ -493,7 +499,15 @@ export interface ParsedStatusRow {
 }
 
 export function parseStatusRow(gridText: string): ParsedStatusRow | null {
-  const row = gridText.split("\n").find((l) => MODEL_ROW_RE.test(l));
+  // Scan bottom-up (same reasoning as findFooterStart): the real status row
+  // lives in the bottom footer, but a `Sonnet 4.6 …`-shaped line can appear
+  // earlier in the grid as answer prose (e.g. the model discussing its own
+  // pricing) and a top-down .find would match that instead (claw-uu2u B2).
+  const lines = gridText.split("\n");
+  let row: string | undefined;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (MODEL_ROW_RE.test(lines[i])) { row = lines[i]; break; }
+  }
   if (!row) return null;
   const out: ParsedStatusRow = {};
   const model = /^\s*((?:Opus|Fable|Sonnet|Haiku|Mythos)\s+[\d.]+(?:\[[^\]]+\])?)/.exec(row);

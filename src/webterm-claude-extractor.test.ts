@@ -859,6 +859,87 @@ describe("hasTurnEndFooter / parseStatusRow (claw-46g8, claw-s5k5)", () => {
   });
 });
 
+describe("parseStatusRow scans bottom-up (claw-uu2u B2)", () => {
+  it("does not let answer prose that resembles a status row shadow the real footer", () => {
+    const grid = [
+      "❯ how much does the model cost",
+      "",
+      "⏺ For reference:",
+      "  Sonnet 4.6 costs $3 per million input tokens.",
+      "",
+      "─".repeat(40),
+      "❯",
+      "─".repeat(40),
+      "   Sonnet 4.6 │ ████░░░░░░ 24%/200k (1) │ $0.21 │ ⏱ 14s",
+    ].join("\n");
+    const row = parseStatusRow(grid);
+    expect(row).not.toBeNull();
+    expect(row!.costUsd).toBeCloseTo(0.21);
+    expect(row!.contextPct).toBe(24);
+  });
+});
+
+describe("hasTurnEndFooter is echo-aware, not just echo-start-aware (claw-uu2u B4)", () => {
+  it("does not treat a spinner-shaped line quoted INSIDE a multi-line echo as end evidence", () => {
+    const userInput = "Here's what happened:\n✻ Cooked for 3s";
+    const grid = [
+      "❯ Here's what happened:",
+      "  ✻ Cooked for 3s",
+      "",
+      "⏺ Let me look into that.",
+      "",
+      "─".repeat(40),
+      "❯",
+      "─".repeat(40),
+    ].join("\n");
+    expect(hasTurnEndFooter(grid, userInput)).toBe(false);
+  });
+
+  it("still finds a real footer that follows the answer after such an echo", () => {
+    const userInput = "Here's what happened:\n✻ Cooked for 3s";
+    const grid = [
+      "❯ Here's what happened:",
+      "  ✻ Cooked for 3s",
+      "",
+      "⏺ Let me look into that.",
+      "",
+      "✻ Cooked for 5s",
+      "",
+      "─".repeat(40),
+      "❯",
+      "─".repeat(40),
+    ].join("\n");
+    expect(hasTurnEndFooter(grid, userInput)).toBe(true);
+  });
+});
+
+describe("duration regexes accept 3+ components (claw-uu2u B6)", () => {
+  it("counts a three-component duration as end evidence", () => {
+    const f = loadFixture("10-haiku-endstate");
+    const threeComponent = f.grid.replace("✻ Cooked for 12s", "✻ Worked for 1h 2m 14s");
+    expect(hasTurnEndFooter(threeComponent, f.userInput)).toBe(true);
+  });
+
+  it("filters a three-component duration as chrome, never delivered as content", () => {
+    const grid = [
+      "❯ do the thing",
+      "",
+      "⏺ Done.",
+      "",
+      "✻ Worked for 1h 2m 14s",
+      "",
+      "─".repeat(120),
+      "❯",
+      "─".repeat(120),
+      "   Opus 4.8 (1M context) │ ⏱ 1h2m14s",
+    ].join("\n");
+    const turn = extractTurn(grid, "do the thing");
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).not.toContain("Worked for");
+    expect(turn!.assistant).toContain("Done.");
+  });
+});
+
 describe("suffixed past-tense spinner (claw-prf6)", () => {
   it("counts as end evidence with a '· N shell still running' trailer", () => {
     const f = loadFixture("10-haiku-endstate");

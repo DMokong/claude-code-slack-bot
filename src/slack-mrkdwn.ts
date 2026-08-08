@@ -42,14 +42,40 @@ function splitByFences(text: string): { fenced: boolean; lines: string[] }[] {
 // are always prose — claude's dash/numbered lists are the false-positive
 // magnet here.
 const LIST_ITEM_RE = /^\s*([-*•]|\d+[.)])\s/;
-const CODE_SHAPE_RE =
-  /(=>|[;{}]\s*$|^\s*(def|return|const|let|var|import|from|class|if|for|while|function|elif|else:|try:|except)\b|\w+\([^)]*\)\s*(:|{|$))/;
+
+// Flush-left lines get a MUCH more conservative test than indented ones
+// (claw-uu2u B1): prose sentences routinely mention `compute()` or use "=>"
+// as informal notation ("slack => bot"), and a loose shape regex fenced them
+// wholesale, eating bold markers along the way. Markdown markers or a
+// sentence-ending period/!/? veto code status outright; a leading keyword
+// then overrides the generic "reads as prose" veto (a `return` statement has
+// no `=`/`;`/`{` but is still code).
+const FLUSH_MD_MARKER_RE = /\*\*|\[[^\]]+\]\(/;
+const FLUSH_SENTENCE_END_RE = /[.!?]\s*$/;
+const FLUSH_KEYWORD_RE =
+  /^(def|return|const|let|var|import|from|class|for|while|if|elif|try|except|function)\b/;
+const FLUSH_BLOCK_END_RE = /\)\s*[{;:]\s*$/;
+const FLUSH_ASSIGNMENT_RE = /^[\w$.[\]]+\s*=\s*\S/;
+
+function wordCount(s: string): number {
+  return s.split(/\s+/).filter(Boolean).length;
+}
+
+function isFlushLeftCode(trimmed: string): boolean {
+  if (FLUSH_MD_MARKER_RE.test(trimmed)) return false;
+  if (FLUSH_SENTENCE_END_RE.test(trimmed)) return false;
+  if (FLUSH_KEYWORD_RE.test(trimmed)) return true;
+  if (wordCount(trimmed) >= 4 && !/[=;{]/.test(trimmed)) return false; // reads as prose
+  if (FLUSH_BLOCK_END_RE.test(trimmed)) return true;
+  if (FLUSH_ASSIGNMENT_RE.test(trimmed)) return true;
+  return false;
+}
 
 function isCodeLine(line: string): boolean {
   if (line.trim() === "") return false;
   if (LIST_ITEM_RE.test(line)) return false;
-  const indented = /^\s{2,}/.test(line);
-  return indented || CODE_SHAPE_RE.test(line);
+  if (/^\s{2,}/.test(line)) return true; // indentation is the reliable signal
+  return isFlushLeftCode(line.trim());
 }
 
 // Wrap runs of >= 2 consecutive code-shaped lines in triple-backtick fences.
@@ -83,22 +109,36 @@ export function refenceCode(text: string): string {
   return out.join("\n");
 }
 
-// Markdown -> Slack mrkdwn on non-code text. Inline code spans are shielded
-// the same way fenced blocks are.
-function transformProseLine(line: string): string {
-  // Headers first — the whole line becomes bold.
-  const header = /^(#{1,6})\s+(.*)$/.exec(line);
-  if (header) return `*${header[2].trim()}*`;
-  // Shield inline code spans, transform the rest, then restore.
+// Shield inline code spans so bold/link conversion never touches their
+// contents, run `transform` on what's left, then restore the spans verbatim.
+function withCodeShielded(text: string, transform: (s: string) => string): string {
   const spans: string[] = [];
-  let shielded = line.replace(/`[^`]*`/g, (m) => {
+  const shielded = text.replace(/`[^`]*`/g, (m) => {
     spans.push(m);
     return `\u0000${spans.length - 1}\u0000`;
   });
-  shielded = shielded
-    .replace(/\*\*([^*]+)\*\*/g, "*$1*")
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "<$2|$1>");
-  return shielded.replace(/\u0000(\d+)\u0000/g, (_, n) => spans[Number(n)]);
+  return transform(shielded).replace(/\u0000(\d+)\u0000/g, (_, n) => spans[Number(n)]);
+}
+
+const LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
+const BOLD_RE = /\*\*([^*]+)\*\*/g;
+
+// Markdown -> Slack mrkdwn on non-code text. Inline code spans are shielded
+// the same way fenced blocks are.
+function transformProseLine(line: string): string {
+  // Headers first — the whole line becomes bold. Links/inline-code inside the
+  // header still need converting, but bold markers must be DROPPED rather
+  // than converted: `**now**` inside a header would produce nested
+  // `*…*now*…*`, which Slack renders badly — the header's own bold wrapper
+  // already covers it (claw-uu2u B5).
+  const header = /^(#{1,6})\s+(.*)$/.exec(line);
+  if (header) {
+    const inner = withCodeShielded(header[2].trim(), (s) =>
+      s.replace(BOLD_RE, "$1").replace(LINK_RE, "<$2|$1>"),
+    );
+    return `*${inner}*`;
+  }
+  return withCodeShielded(line, (s) => s.replace(BOLD_RE, "*$1*").replace(LINK_RE, "<$2|$1>"));
 }
 
 export function toMrkdwn(text: string): string {
