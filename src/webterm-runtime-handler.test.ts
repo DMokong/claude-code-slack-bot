@@ -1945,3 +1945,68 @@ describe("presence: reactions, typing status, abort (claw-fs45, claw-jfui)", () 
     await handler.shutdown({ killSessions: true });
   }, 10_000);
 });
+
+describe("per-turn log + barrier de-noise (claw-za0o)", () => {
+  it("emits one structured 'Turn complete' INFO per turn", async () => {
+    const { Logger } = await import("./logger");
+    const infoSpy = vi.spyOn(Logger.prototype, "info");
+    const mock = makeMockWebterm();
+    const slack = makeSlack();
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10,
+    });
+    const turn = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "hi", slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const sid = mock.onlySessionId();
+    mock.setText(sid, buildBootGrid());
+    mock.emitPromptReady(sid);
+    await waitFor(() => mock.sessions.get(sid)!.inputs.some((i) => i.kind === "paste"));
+    mock.setText(sid, buildTurnGrid("hi", "hello!"));
+    mock.emitOutputChunk(sid);
+    await turn;
+    const complete = infoSpy.mock.calls.filter((c) => c[0] === "Turn complete");
+    expect(complete).toHaveLength(1);
+    expect(complete[0][1]).toMatchObject({ threadKey: "C1::1.0", outcome: "ok" });
+    expect(complete[0][1].ms).toBeGreaterThanOrEqual(0);
+    infoSpy.mockRestore();
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+
+  it("echoed:false on a session's first turn logs debug, not warn", async () => {
+    const { Logger } = await import("./logger");
+    const warnSpy = vi.spyOn(Logger.prototype, "warn");
+    const mock = makeMockWebterm();
+    // Force echoed:false on every input ack.
+    const origFetch = mock.fetchImpl;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const res = await origFetch(input, init);
+      const url = typeof input === "string" ? input : (input as URL).toString();
+      if (url.includes("/input") && res.status === 200) {
+        const body = await res.json();
+        return new Response(JSON.stringify({ ...body, echoed: false }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return res;
+    };
+    const slack = makeSlack();
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10,
+    });
+    const turn = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "hi", slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const sid = mock.onlySessionId();
+    mock.setText(sid, buildBootGrid());
+    mock.emitPromptReady(sid);
+    await waitFor(() => mock.sessions.get(sid)!.inputs.some((i) => i.kind === "paste"));
+    mock.setText(sid, buildTurnGrid("hi", "hello!"));
+    mock.emitOutputChunk(sid);
+    await turn;
+    const echoWarns = warnSpy.mock.calls.filter((c) => String(c[0]).includes("input not echoed"));
+    expect(echoWarns).toHaveLength(0);
+    warnSpy.mockRestore();
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+});

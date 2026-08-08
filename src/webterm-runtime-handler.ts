@@ -18,6 +18,7 @@ import type { WebClient } from "@slack/web-api";
 import { Logger } from "./logger";
 import { extractTurn, extractSegments, isGridIdle, formatTurnForSlack, extractActivity, hasTurnEndFooter, parseStatusRow, type ParsedStatusRow, type Segment } from "./webterm-claude-extractor";
 import { formatForSlack } from "./slack-mrkdwn";
+import { queryCounter, queryCostHistogram, queryDurationHistogram } from "./telemetry";
 import { ToolTimeline } from "./tool-timeline";
 
 const DEFAULT_WEBTERM_URL = "http://127.0.0.1:7681";
@@ -161,6 +162,10 @@ interface WebtermSession {
   // True only between boot/adoption (where the grid was already verified) and
   // the first turn — lets handleMessage skip a redundant liveness fetch (H1).
   freshlyBooted: boolean;
+  // False until this session completes its first turn. The echo barrier races
+  // claude's TUI boot on turn one, so an echoed:false there is expected noise,
+  // not a wedge signal (claw-za0o).
+  everCompletedTurn: boolean;
 }
 
 export interface HandleMessageOpts {
@@ -346,6 +351,8 @@ export class WebtermRuntimeHandler {
     const timeline = new ToolTimeline();
     const turnStartedAt = Date.now();
     let statusAtStart: ParsedStatusRow | null = null;
+    let statusAtEnd: ParsedStatusRow | null = null;
+    let deliveredSegments = 0;
     const statusLoop = statusTs
       ? this.runStatusLoop(session, req, statusTs, statusCtl, timeline)
       : Promise.resolve();
@@ -375,6 +382,7 @@ export class WebtermRuntimeHandler {
       await this.sendInput(session.id, req.text, {
         kind: "paste",
         settleMs: this.opts.pasteSettleMs,
+        quietEchoWarn: !session.everCompletedTurn,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -456,6 +464,7 @@ export class WebtermRuntimeHandler {
 
       timeline.observe(grid);
       if (!statusAtStart) statusAtStart = parseStatusRow(grid);
+      statusAtEnd = parseStatusRow(grid) ?? statusAtEnd;
 
       const gridChanged = grid !== lastGrid;
       if (gridChanged) { lastGrid = grid; lastChangeAt = Date.now(); }
@@ -497,6 +506,7 @@ export class WebtermRuntimeHandler {
         session, req, grid, deliver, stopStatus,
         { postedSegments, growingTs, growingIndex, streaming, stableIdle: turnDone },
       ));
+      deliveredSegments = postedSegments;
 
       if (turnDone) {
         // stopStatus was called above at idleObservations === 1.
@@ -530,6 +540,28 @@ export class WebtermRuntimeHandler {
       }
     }
     } finally {
+      session.everCompletedTurn = true;
+      // One structured line per turn (claw-za0o) — the pipeline's only
+      // turn-level observability — plus OTel metrics on the same instruments
+      // the SDK path uses, distinguished by engine attribute (claw-s5k5).
+      const ms = Date.now() - turnStartedAt;
+      const costDelta =
+        statusAtEnd?.costUsd !== undefined && statusAtStart?.costUsd !== undefined
+          ? Math.max(0, statusAtEnd.costUsd - statusAtStart.costUsd)
+          : undefined;
+      this.logger.info("Turn complete", {
+        threadKey: session.threadKey,
+        ms,
+        segments: deliveredSegments,
+        tools: timeline.entries().length,
+        outcome: warned ? "warned" : "ok",
+        ...(costDelta !== undefined ? { costUsd: Number(costDelta.toFixed(4)) } : {}),
+        ...(statusAtEnd?.contextPct !== undefined ? { contextPct: statusAtEnd.contextPct } : {}),
+      });
+      const attrs = { channel: req.channelId, engine: "webterm" };
+      queryCounter.add(1, attrs);
+      queryDurationHistogram.record(ms, attrs);
+      if (costDelta !== undefined) queryCostHistogram.record(costDelta, attrs);
       await this.setUserReaction(req, "eyes", warned ? "warning" : "white_check_mark");
       await req.setThreadStatus?.("").catch(() => {});
     }
@@ -908,7 +940,7 @@ export class WebtermRuntimeHandler {
       const grid = await this.fetchGridText(session.id);
       if (!TRUST_DIALOG_RE.test(grid)) return;
       this.logger.info("Trust-folder dialog at boot — accepting", { sessionId: session.id });
-      await this.sendKeys(session.id, ["Enter"]);
+      await this.sendKeys(session.id, ["Enter"], true);
       target = session.promptReadyCount + 1;
     }
   }
@@ -1008,6 +1040,7 @@ export class WebtermRuntimeHandler {
       alive: true,
       inFlight: null,
       freshlyBooted: true,
+      everCompletedTurn: true, // it ran turns for a previous bot process
     };
     session.ssePromise = this.runSseListener(session);
     this.logger.info("Adopted surviving webterm session", { sessionId: match.id, threadKey });
@@ -1049,12 +1082,13 @@ export class WebtermRuntimeHandler {
       alive: true,
       inFlight: null,
       freshlyBooted: true,
+      everCompletedTurn: false,
     };
     session.ssePromise = this.runSseListener(session);
     // Legacy shell mode: boot claude by typing the command into the shell.
     // Direct-spawn mode skips this — claude IS the PTY child and is already
     // booting when the POST returns.
-    if (!directSpawn) await this.sendInput(session.id, this.buildBootCmd(channelId, threadTs));
+    if (!directSpawn) await this.sendInput(session.id, this.buildBootCmd(channelId, threadTs), { quietEchoWarn: true });
     try {
       await this.completeBootHandshake(session);
     } catch (err) {
@@ -1120,7 +1154,7 @@ export class WebtermRuntimeHandler {
   private async sendInput(
     sessionId: string,
     text: string,
-    opts: { kind?: "text" | "paste"; settleMs?: number } = {},
+    opts: { kind?: "text" | "paste"; settleMs?: number; quietEchoWarn?: boolean } = {},
   ): Promise<void> {
     const base = `${this.opts.webtermUrl}/api/sessions/${sessionId}/input`;
     const txt = await this.authedFetch(base, {
@@ -1128,27 +1162,27 @@ export class WebtermRuntimeHandler {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ kind: opts.kind ?? "text", data: text }),
     });
-    await this.checkInputResponse(txt, sessionId, "sendInput text");
+    await this.checkInputResponse(txt, sessionId, "sendInput text", opts.quietEchoWarn);
     // Wait out claude's paste-aggregation window before Enter, or the
     // submit keystroke is swallowed into the paste (see DEFAULT_PASTE_SETTLE_MS).
     if (opts.settleMs) await sleep(opts.settleMs);
-    await this.sendKeys(sessionId, ["Enter"]);
+    await this.sendKeys(sessionId, ["Enter"], opts.quietEchoWarn);
   }
 
-  private async sendKeys(sessionId: string, keys: string[]): Promise<void> {
+  private async sendKeys(sessionId: string, keys: string[], quietEchoWarn = false): Promise<void> {
     const res = await this.authedFetch(`${this.opts.webtermUrl}/api/sessions/${sessionId}/input`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ kind: "keys", keys }),
     });
-    await this.checkInputResponse(res, sessionId, "sendKeys");
+    await this.checkInputResponse(res, sessionId, "sendKeys", quietEchoWarn);
   }
 
   // Shared /input response handling: 409 = terminal-retained dead session
   // (claw-3btg.2) — surface the exit cause; 200 = echo ack (claw-3btg.8) —
   // echoed:false means the PTY swallowed the write silently, worth a warning
   // but not a failure (the turn loop's own guards decide what to do next).
-  private async checkInputResponse(res: Response, sessionId: string, what: string): Promise<void> {
+  private async checkInputResponse(res: Response, sessionId: string, what: string, quietEchoWarn = false): Promise<void> {
     if (res.status === 409) {
       let exitCode: number | null | undefined;
       try { exitCode = ((await res.json()) as { exitCode?: number | null }).exitCode; } catch { /* no body */ }
@@ -1159,7 +1193,10 @@ export class WebtermRuntimeHandler {
       try {
         const ack = (await res.json()) as { echoed?: boolean };
         if (ack.echoed === false) {
-          this.logger.warn("input not echoed within the barrier — PTY may be wedged", { sessionId });
+          // On a session's FIRST turn the echo races the TUI boot — expected,
+          // demote to debug so real wedges stay visible (claw-za0o).
+          if (quietEchoWarn) this.logger.debug("input not echoed within the barrier (first turn — expected)", { sessionId });
+          else this.logger.warn("input not echoed within the barrier — PTY may be wedged", { sessionId });
         }
       } catch { /* older server: empty/plain body */ }
     }
