@@ -123,6 +123,24 @@ describe("extractTurn — Fable-era TUI (claude v2.1.173, bracketed-paste input)
     expect(turn!.assistant).toBe("");
   });
 
+  it("preserves relative code indentation beyond the marker indent (claw-badj)", () => {
+    const grid = [
+      "❯ show me compute",
+      "",
+      "⏺ Here's the function:",
+      "",
+      "  def compute():",
+      "      return 17 * 23 * 2",
+      "",
+      "─".repeat(120),
+      "❯",
+      "─".repeat(120),
+    ].join("\n");
+    const turn = extractTurn(grid, "show me compute");
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).toContain("def compute():\n    return 17 * 23 * 2");
+  });
+
   it("fable-code-block-response: preserves intentional code newlines (H4 — does NOT flatten)", () => {
     const f = loadFixture("fable-code-block-response");
     const turn = extractTurn(f.grid, f.userInput);

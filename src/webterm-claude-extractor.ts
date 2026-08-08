@@ -264,7 +264,11 @@ function unwrapWordWrap(lines: string[], indent: number, cols: number): string[]
       // Continuation of a wrapped line — join with a single space.
       out[out.length - 1] = out[out.length - 1].replace(/\s+$/, "") + " " + body.trimStart();
     } else {
-      out.push(body);
+      // Keep indentation BEYOND the block-marker indent (claw-badj): code
+      // inside a ⏺ block is indented past the 2-col base, and flattening it
+      // shipped syntactically-invalid Python to Slack. The base indent itself
+      // still strips so prose stays flush.
+      out.push(" ".repeat(Math.max(0, leading - indent)) + body);
     }
     prevWidth = displayWidth(line);
   }
