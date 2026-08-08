@@ -454,6 +454,61 @@ export function isGridIdle(gridText: string, opts: ExtractOptions = {}): boolean
   return findBottomPromptRow(lines, promptMarker) !== -1;
 }
 
+// Past-tense spinner footer — claude's positive "turn complete" tell
+// ("✻ Cooked for 12s", "✶ Pounced for 2m 14s"). Distinct from SPINNER_FOR_RE
+// only in accepting minute-form durations. Used as END EVIDENCE by the relay
+// (claw-46g8): a frozen idle grid WITHOUT this line is more likely a
+// mid-answer model pause than a finished turn — the live-verified haiku drop.
+const PAST_SPINNER_RE = new RegExp(`^[${SPINNER_GLYPHS}]\\s+\\S+(?:ing|ed)\\s+for\\s+[\\d]+[smh](?:\\s*[\\d]+[smh])?$`);
+
+// True iff a past-tense spinner appears BELOW the last user echo — i.e. the
+// current turn (not a previous one) has rendered its completion footer.
+export function hasTurnEndFooter(
+  gridText: string,
+  userInputText: string,
+  opts: ExtractOptions = {},
+): boolean {
+  const promptMarker = opts.promptMarker ?? DEFAULT_PROMPT_MARKER;
+  const lines = gridText.split("\n");
+  const echoStart = findLastUserEcho(lines, userInputText, promptMarker);
+  if (echoStart === -1) return false;
+  for (let i = echoStart + 1; i < lines.length; i++) {
+    if (PAST_SPINNER_RE.test(lines[i].trim())) return true;
+  }
+  return false;
+}
+
+// Parse of claude's model-status row (claw-s5k5):
+//   "Sonnet 4.6 │ █████░░░ 25%%/200k (21.3k) │ $0.30 │ ⏱ 26m7s"
+// All fields best-effort — absent pieces come back undefined.
+export interface ParsedStatusRow {
+  model?: string;
+  contextPct?: number;
+  contextLimitK?: number;
+  tokens?: number;
+  costUsd?: number;
+  elapsed?: string;
+}
+
+export function parseStatusRow(gridText: string): ParsedStatusRow | null {
+  const row = gridText.split("\n").find((l) => MODEL_ROW_RE.test(l));
+  if (!row) return null;
+  const out: ParsedStatusRow = {};
+  const model = /^\s*((?:Opus|Fable|Sonnet|Haiku|Mythos)\s+[\d.]+(?:\[[^\]]+\])?)/.exec(row);
+  if (model) out.model = model[1].trim();
+  const pct = /(\d+)%/.exec(row);
+  if (pct) out.contextPct = Number(pct[1]);
+  const limit = /%+\/(\d+)k/.exec(row);
+  if (limit) out.contextLimitK = Number(limit[1]);
+  const tokens = /\(([\d.]+)(k?)\)/.exec(row);
+  if (tokens) out.tokens = Math.round(Number(tokens[1]) * (tokens[2] === "k" ? 1000 : 1));
+  const cost = /\$([\d.]+)/.exec(row);
+  if (cost) out.costUsd = Number(cost[1]);
+  const elapsed = /⏱\s*([\dhms]+(?:\s*[\dhms]+)*)/.exec(row);
+  if (elapsed) out.elapsed = elapsed[1].replace(/\s+/g, "");
+  return out;
+}
+
 // Format the extracted turn as a single Slack mrkdwn-safe string.
 // v1 is intentionally simple: tool notes prefix as italic, assistant body
 // passes through as-is. Slack mrkdwn renders newlines as visible line breaks,

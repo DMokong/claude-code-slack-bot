@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { extractTurn, formatTurnForSlack, extractActivity, extractSegments, isGridIdle, displayWidth } from "./webterm-claude-extractor";
+import { extractTurn, formatTurnForSlack, extractActivity, extractSegments, isGridIdle, displayWidth, hasTurnEndFooter, parseStatusRow } from "./webterm-claude-extractor";
 
 const FIXTURE_DIR = join(__dirname, "..", "test", "fixtures", "webterm-grids");
 
@@ -813,5 +813,48 @@ describe("cast-replay fixture pipeline (claw-3btg.6)", () => {
     const turn = extractTurn(grid, "count from 1 to 5, one number per line, nothing else");
     expect(turn).not.toBeNull();
     expect(turn!.assistant.split("\n")).toEqual(["1", "2", "3", "4", "5"]);
+  });
+});
+
+describe("hasTurnEndFooter / parseStatusRow (claw-46g8, claw-s5k5)", () => {
+  it("10-haiku-endstate: past-tense spinner after echo = end evidence", () => {
+    const f = loadFixture("10-haiku-endstate");
+    expect(hasTurnEndFooter(f.grid, f.userInput)).toBe(true);
+  });
+
+  it("no footer while mid-render (spinner removed, box present) = no end evidence", () => {
+    const f = loadFixture("10-haiku-endstate");
+    const midRender = f.grid
+      .split("\n")
+      .filter((l: string) => !/^✻ Cooked for 12s$/.test(l.trim()))
+      .join("\n");
+    expect(hasTurnEndFooter(midRender, f.userInput)).toBe(false);
+  });
+
+  it("a past-tense spinner ABOVE the last echo (previous turn) does not count", () => {
+    const f = loadFixture("10-haiku-endstate");
+    const lines = f.grid.split("\n");
+    const withPrior = ["✻ Pounced for 3s", "", ...lines.filter((l: string) => !/^✻ Cooked/.test(l.trim()))].join("\n");
+    expect(hasTurnEndFooter(withPrior, f.userInput)).toBe(false);
+  });
+
+  it("accepts minute-form durations", () => {
+    const f = loadFixture("10-haiku-endstate");
+    const minuteForm = f.grid.replace("✻ Cooked for 12s", "✻ Cooked for 2m 14s");
+    expect(hasTurnEndFooter(minuteForm, f.userInput)).toBe(true);
+  });
+
+  it("parses the model status row", () => {
+    const f = loadFixture("10-haiku-endstate");
+    const row = parseStatusRow(f.grid);
+    expect(row).not.toBeNull();
+    expect(row.model).toBe("Sonnet 4.6");
+    expect(row.contextPct).toBe(25);
+    expect(row.costUsd).toBeCloseTo(0.3);
+    expect(row.elapsed).toBe("26m7s");
+  });
+
+  it("parseStatusRow returns null when no model row present", () => {
+    expect(parseStatusRow("❯ hi\nsome text\n")).toBeNull();
   });
 });
