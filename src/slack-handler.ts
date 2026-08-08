@@ -198,11 +198,23 @@ export class SlackHandler {
       !this.isMcpReloadCommand(text)
     ) {
       const isDM = channel.startsWith('D');
+      // "stop" in a webterm-routed thread interrupts the running turn
+      // (claw-fs45) instead of being typed into the REPL as a prompt.
+      if (/^(stop|abort|esc)$/i.test(text.trim())) {
+        const stopped = await this.webtermRuntime.abortTurn(channel, thread_ts || ts);
+        await say({
+          text: stopped ? '🛑 stopped' : 'nothing running in this thread to stop',
+          thread_ts: thread_ts || ts,
+        });
+        return;
+      }
       this.logger.debug('Routing to webterm runtime', { channel, thread_ts: thread_ts || ts });
       await this.webtermRuntime.handleMessage({
         channelId: channel,
         threadTs: thread_ts || ts,
         text,
+        userTs: ts,
+        setThreadStatus: (status: string) => this.setThreadStatus(channel, thread_ts || ts, status),
         cwd: this.workingDirManager.getWorkingDirectory(channel, thread_ts, isDM ? user : undefined),
         slack: this.app.client,
       });

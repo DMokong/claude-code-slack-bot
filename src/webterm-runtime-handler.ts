@@ -167,10 +167,21 @@ export interface HandleMessageOpts {
   channelId: string;
   threadTs: string | undefined;
   text: string;
+  // ts of the USER's message — enables the reaction lifecycle (claw-fs45):
+  // 👀 while the turn runs, ✅/⚠️ when it resolves. Absent = no reactions.
+  userTs?: string;
+  // Native Slack assistant typing status (claw-jfui), pre-bound to this
+  // thread by the slack-handler. Empty string clears.
+  setThreadStatus?: (status: string) => Promise<void>;
   // Per-thread working directory (from WorkingDirectoryManager); falls back
   // to the handler-level default cwd.
   cwd?: string;
-  slack: Pick<WebClient, "chat">;
+  slack: Pick<WebClient, "chat"> & {
+    reactions?: {
+      add: (args: { channel: string; timestamp: string; name: string }) => Promise<unknown>;
+      remove: (args: { channel: string; timestamp: string; name: string }) => Promise<unknown>;
+    };
+  };
 }
 
 interface InternalOpts extends Required<Omit<WebtermRuntimeOpts, "fetchImpl" | "token">> {
@@ -344,8 +355,20 @@ export class WebtermRuntimeHandler {
       statusCtl.cancelled = true;
       await statusLoop.catch(() => {});
     };
-    const deliver = (text: string) => this.deliverReply(req, statusTs, text);
+    // Outcome tracking for the reaction lifecycle (claw-fs45): any delivered
+    // warning flips the end reaction from ✅ to ⚠️.
+    let warned = false;
+    const deliver = (text: string) => {
+      if (text.startsWith(":warning:")) warned = true;
+      return this.deliverReply(req, statusTs, text);
+    };
 
+    // Presence: 👀 on the user's message + native typing status while the
+    // turn runs (claw-fs45, claw-jfui). All best-effort.
+    await this.setUserReaction(req, null, "eyes");
+    await req.setThreadStatus?.("is working…").catch(() => {});
+
+    try {
     try {
       // Bracketed paste so newlines in multi-line Slack messages insert
       // literally instead of acting as Enter and submitting prematurely.
@@ -505,6 +528,41 @@ export class WebtermRuntimeHandler {
         if (postedSegments === 0) await deliver(":warning: claude stopped responding.");
         return;
       }
+    }
+    } finally {
+      await this.setUserReaction(req, "eyes", warned ? "warning" : "white_check_mark");
+      await req.setThreadStatus?.("").catch(() => {});
+    }
+  }
+
+  // Best-effort reaction swap on the user's message (claw-fs45).
+  private async setUserReaction(req: HandleMessageOpts, from: string | null, to: string | null): Promise<void> {
+    if (!req.userTs || !req.slack.reactions) return;
+    const base = { channel: req.channelId, timestamp: req.userTs };
+    if (from) await req.slack.reactions.remove({ ...base, name: from }).catch(() => {});
+    if (to) await req.slack.reactions.add({ ...base, name: to }).catch(() => {});
+  }
+
+  // True when a turn is currently running on this thread's session.
+  hasInFlight(channelId: string, threadTs: string | undefined): boolean {
+    const session = this.sessions.get(this.threadKey(channelId, threadTs));
+    return !!session?.inFlight;
+  }
+
+  // "stop" from Slack (claw-fs45): send Escape to the thread's PTY so claude
+  // interrupts the current generation. Returns false when there's nothing to
+  // stop. The interrupted turn then finalizes through the normal relay path
+  // with whatever content had rendered.
+  async abortTurn(channelId: string, threadTs: string | undefined): Promise<boolean> {
+    const session = this.sessions.get(this.threadKey(channelId, threadTs));
+    if (!session || !session.alive || !session.inFlight) return false;
+    try {
+      await this.sendKeys(session.id, ["Escape"]);
+      this.logger.info("Sent Escape to abort turn", { sessionId: session.id });
+      return true;
+    } catch (err) {
+      this.logger.warn("abortTurn failed", { error: err instanceof Error ? err.message : String(err) });
+      return false;
     }
   }
 

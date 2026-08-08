@@ -1856,3 +1856,92 @@ describe("tool timeline recap (claw-zlr4)", () => {
     await handler.shutdown({ killSessions: true });
   }, 10_000);
 });
+
+describe("presence: reactions, typing status, abort (claw-fs45, claw-jfui)", () => {
+  function makeSlackWithReactions() {
+    const base = makeSlack();
+    const reactions = { added: [] as any[], removed: [] as any[] };
+    (base.client as any).reactions = {
+      add: vi.fn(async (a: any) => { reactions.added.push(a); return { ok: true }; }),
+      remove: vi.fn(async (a: any) => { reactions.removed.push(a); return { ok: true }; }),
+    };
+    return { ...base, reactions };
+  }
+
+  async function boot(mock: ReturnType<typeof makeMockWebterm>, handler: WebtermRuntimeHandler, req: any) {
+    const turn = handler.handleMessage(req);
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const sid = mock.onlySessionId();
+    mock.setText(sid, buildBootGrid());
+    mock.emitPromptReady(sid);
+    await waitFor(() => mock.sessions.get(sid)!.inputs.some((i) => i.kind === "paste"));
+    return { turn, sid };
+  }
+
+  it("👀 during the turn, ✅ after a clean turn; typing status set then cleared", async () => {
+    const mock = makeMockWebterm();
+    const slack = makeSlackWithReactions();
+    const statuses: string[] = [];
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10,
+    });
+    const { turn, sid } = await boot(mock, handler, {
+      channelId: "C1", threadTs: "1.0", text: "hi", userTs: "u-1", slack: slack.client,
+      setThreadStatus: async (st: string) => { statuses.push(st); },
+    });
+    mock.setText(sid, buildTurnGrid("hi", "hello!"));
+    mock.emitOutputChunk(sid);
+    await turn;
+    expect(slack.reactions.added.map((a) => a.name)).toEqual(["eyes", "white_check_mark"]);
+    expect(slack.reactions.removed.map((a) => a.name)).toEqual(["eyes"]);
+    expect(statuses[0]).toBe("is working…");
+    expect(statuses[statuses.length - 1]).toBe("");
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+
+  it("⚠️ replaces ✅ when the turn delivered a warning", async () => {
+    const mock = makeMockWebterm();
+    const slack = makeSlackWithReactions();
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10, slidingInactivityMs: 100,
+    });
+    const { turn, sid } = await boot(mock, handler, {
+      channelId: "C1", threadTs: "1.0", text: "hi", userTs: "u-1", slack: slack.client,
+    });
+    // Never idle, never changing: grid WITHOUT a prompt box → wedge guard fires.
+    mock.setText(sid, ["❯ hi", "", "✳ Nesting… (5s · ↓ 12 tokens)"].join("\n"));
+    mock.emitOutputChunk(sid);
+    await turn;
+    expect(slack.reactions.added.map((a) => a.name)).toEqual(["eyes", "warning"]);
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+
+  it("abortTurn sends Escape to the in-flight session and reports idle threads", async () => {
+    const mock = makeMockWebterm();
+    const slack = makeSlackWithReactions();
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10,
+    });
+    expect(await handler.abortTurn("C1", "1.0")).toBe(false); // nothing running
+    const { turn, sid } = await boot(mock, handler, {
+      channelId: "C1", threadTs: "1.0", text: "long task", slack: slack.client,
+    });
+    // Turn is mid-flight (no end evidence on the grid).
+    mock.setText(sid, ["❯ long task", "", "✳ Working… (2s)"].join("\n"));
+    mock.emitOutputChunk(sid);
+    expect(handler.hasInFlight("C1", "1.0")).toBe(true);
+    expect(await handler.abortTurn("C1", "1.0")).toBe(true);
+    await waitFor(() => mock.sessions.get(sid)!.inputs.some((i) => i.kind === "keys" && i.keys?.includes("Escape")));
+    // claude interrupts → prompt returns with footer; turn finalizes normally.
+    mock.setText(sid, buildTurnGrid("long task", "stopped early."));
+    mock.emitOutputChunk(sid);
+    await turn;
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+});
