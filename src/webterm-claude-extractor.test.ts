@@ -858,3 +858,30 @@ describe("hasTurnEndFooter / parseStatusRow (claw-46g8, claw-s5k5)", () => {
     expect(parseStatusRow("❯ hi\nsome text\n")).toBeNull();
   });
 });
+
+describe("suffixed past-tense spinner (claw-prf6)", () => {
+  it("counts as end evidence with a '· N shell still running' trailer", () => {
+    const f = loadFixture("10-haiku-endstate");
+    const suffixed = f.grid.replace("✻ Cooked for 12s", "✻ Churned for 13s · 1 shell still running");
+    expect(hasTurnEndFooter(suffixed, f.userInput)).toBe(true);
+  });
+
+  it("is filtered as chrome, never delivered as content", () => {
+    const grid = [
+      "❯ do the thing",
+      "",
+      "⏺ Done — running it in the background.",
+      "",
+      "✻ Churned for 13s · 1 shell still running",
+      "",
+      "─".repeat(120),
+      "❯",
+      "─".repeat(120),
+      "   Opus 4.8 (1M context) │ ⏱ 13s",
+    ].join("\n");
+    const turn = extractTurn(grid, "do the thing");
+    expect(turn).not.toBeNull();
+    expect(turn!.assistant).not.toContain("shell still running");
+    expect(turn!.assistant).toContain("Done — running it in the background.");
+  });
+});

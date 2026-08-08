@@ -39,7 +39,7 @@ const SPINNER_GLYPHS = "✻✶✳✢✽⠂⠐⠈⠁·";
 // content. Each rule is independent; a line matching ANY rule is dropped.
 const CHROME_RULES: RegExp[] = [
   /^\s*─{4,}\s*$/,                                          // horizontal rules between regions
-  /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+s\s*$/,       // spinner: "✻ Cooked for 3s"
+  /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+[smh](?:\s*\d+[smh])?(?:\s*·.*)?$/, // spinner: "✻ Cooked for 3s" / "✻ Churned for 13s · 1 shell still running"
   /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+ing…\s*$/,                         // spinner: "✻ Pondering…" / "· Frolicking…"
   /^\s*(Opus|Fable|Sonnet|Haiku|Mythos)\s+\d/,              // model status row (any model)
   /^\s*[●○]\s+(high|medium|low)\b/,                          // effort indicator
@@ -72,7 +72,9 @@ function isPromptLine(t: string, bareMarker: string): boolean {
   return next === 0x20 || next === 0xa0 || next === 0x09; // space | NBSP | tab
 }
 
-const SPINNER_FOR_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+s$/;
+// Suffix-tolerant (claw-prf6): the live spinner carries trailers like
+// "· 1 shell still running" after the duration.
+const SPINNER_FOR_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+[smh](?:\s*\d+[smh])?(?:\s*·.*)?$/;
 // claw-gxzq: no EOL anchor — the live spinner usually carries a suffix after
 // the ellipsis ("✳ Nesting… (5s · ↓ 205 tokens)"); an anchored match only saw
 // the bare "✻ Pouncing…" form and let the suffixed form leak into prose.
@@ -459,7 +461,7 @@ export function isGridIdle(gridText: string, opts: ExtractOptions = {}): boolean
 // only in accepting minute-form durations. Used as END EVIDENCE by the relay
 // (claw-46g8): a frozen idle grid WITHOUT this line is more likely a
 // mid-answer model pause than a finished turn — the live-verified haiku drop.
-const PAST_SPINNER_RE = new RegExp(`^[${SPINNER_GLYPHS}]\\s+\\S+(?:ing|ed)\\s+for\\s+[\\d]+[smh](?:\\s*[\\d]+[smh])?$`);
+const PAST_SPINNER_RE = new RegExp(`^[${SPINNER_GLYPHS}]\\s+\\S+(?:ing|ed)\\s+for\\s+[\\d]+[smh](?:\\s*[\\d]+[smh])?(?:\\s*·.*)?$`);
 
 // True iff a past-tense spinner appears BELOW the last user echo — i.e. the
 // current turn (not a previous one) has rendered its completion footer.
