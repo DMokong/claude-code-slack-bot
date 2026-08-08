@@ -2206,3 +2206,36 @@ describe("session resume across reaps (claw-m7bj, claw-8262)", () => {
     await handler.shutdown({ killSessions: true });
   }, 15_000);
 });
+
+describe("images out (claw-ynzo)", () => {
+  it("uploads fresh produced files mentioned in the answer; skips nonexistent paths", async () => {
+    const { writeFileSync } = await import("node:fs");
+    const dir = mkdtempSync(joinPath(tmpdir(), "imgout-"));
+    const realPng = joinPath(dir, "chart.png");
+    writeFileSync(realPng, "png-bytes");
+    const uploaded: string[][] = [];
+    const mock = makeMockWebterm();
+    const slack = makeSlack();
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10,
+      sessionStorePath: freshStorePath(), resumeFileCheck: () => false,
+    });
+    const turn = handler.handleMessage({
+      channelId: "C1", threadTs: "1.0", text: "make a chart", slack: slack.client,
+      uploadFiles: async (paths) => { uploaded.push(paths); },
+    });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const sid = mock.onlySessionId();
+    mock.setText(sid, buildBootGrid());
+    mock.emitPromptReady(sid);
+    await waitFor(() => mock.sessions.get(sid)!.inputs.some((i) => i.kind === "paste"));
+    mock.setText(sid, buildTurnGrid("make a chart", `saved to ${realPng} and /no/such/file.png`));
+    mock.emitOutputChunk(sid);
+    await turn;
+    expect(uploaded).toHaveLength(1);
+    expect(uploaded[0]).toEqual([realPng]);
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+});

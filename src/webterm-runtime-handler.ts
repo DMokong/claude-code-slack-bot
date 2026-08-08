@@ -21,7 +21,7 @@ import { formatForSlack } from "./slack-mrkdwn";
 import { queryCounter, queryCostHistogram, queryDurationHistogram } from "./telemetry";
 import { ToolTimeline } from "./tool-timeline";
 import { ThreadSessionStore } from "./thread-session-store";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -198,6 +198,9 @@ export interface HandleMessageOpts {
   // Native Slack assistant typing status (claw-jfui), pre-bound to this
   // thread by the slack-handler. Empty string clears.
   setThreadStatus?: (status: string) => Promise<void>;
+  // Upload produced files back into the thread (claw-ynzo), pre-bound by the
+  // slack-handler to the image uploader.
+  uploadFiles?: (paths: string[]) => Promise<void>;
   // Per-thread working directory (from WorkingDirectoryManager); falls back
   // to the handler-level default cwd.
   cwd?: string;
@@ -554,6 +557,7 @@ export class WebtermRuntimeHandler {
             : undefined;
         const recap = timeline.recap(Date.now() - turnStartedAt, costDelta);
         if (recap) await this.postReply(req, `_${recap}_`);
+        await this.uploadProducedFiles(req, grid, turnStartedAt);
         await this.runTripwire(session, req, postedSegments);
         return;
       }
@@ -625,6 +629,44 @@ export class WebtermRuntimeHandler {
     } catch (err) {
       this.logger.warn("abortTurn failed", { error: err instanceof Error ? err.message : String(err) });
       return false;
+    }
+  }
+
+  // Files claude produced during the turn ride back into the thread
+  // (claw-ynzo): scan the turn's content for absolute paths to displayable
+  // files that exist AND were modified during this turn — mentioning an old
+  // path must not re-upload it. Best-effort, capped.
+  private async uploadProducedFiles(
+    req: HandleMessageOpts,
+    grid: string,
+    turnStartedAt: number,
+  ): Promise<void> {
+    if (!req.uploadFiles) return;
+    const text = extractSegments(grid, req.text).map((s) => s.text).join("\n");
+    // No spaces in the path class: a greedy class with ' ' swallows prose
+    // between two paths into one bogus match. Space-containing filenames are
+    // the rare case and simply won't auto-upload.
+    const matches = text.match(/(?:\/[\w.@-]+)+\.(?:png|jpe?g|gif|svg|webp|pdf)\b/gi) ?? [];
+    const fresh: string[] = [];
+    for (const raw of [...new Set(matches)]) {
+      const path = raw.trim();
+      try {
+        const st = statSync(path);
+        if (!st.isFile() || st.size > 10 * 1024 * 1024) continue;
+        if (st.mtimeMs < turnStartedAt - 60_000) continue;
+        fresh.push(path);
+      } catch {
+        continue;
+      }
+      if (fresh.length >= 3) break;
+    }
+    if (fresh.length === 0) return;
+    try {
+      await req.uploadFiles(fresh);
+    } catch (err) {
+      this.logger.warn("produced-file upload failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

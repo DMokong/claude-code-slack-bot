@@ -187,8 +187,7 @@ export class SlackHandler {
     // built the extractor that this handler depends on.
     if (
       this.webtermRuntime &&
-      text &&
-      (!files || files.length === 0) &&
+      (text || (files && files.length > 0)) &&
       (config.webterm.routeAll || config.webterm.channels.includes(channel)) &&
       // Bot-level commands (cwd set/get, mcp info/reload) must fall through
       // to their handlers below — routeAll was swallowing them into claude.
@@ -198,6 +197,18 @@ export class SlackHandler {
       !this.isMcpReloadCommand(text)
     ) {
       const isDM = channel.startsWith('D');
+      // Files ride into the warm session (claw-ynzo): download them and hand
+      // claude the local paths inside the prompt — no more silent fallback to
+      // the SDK path (which forked the thread's context).
+      let webtermText = text ?? '';
+      if (files && files.length > 0) {
+        const fileDir = process.env.WEBTERM_FILE_DIR || `${process.env.HOME}/projects/claudeclaw/local/slack-files`;
+        const processed = await this.fileHandler.downloadAndProcessFiles(files, { targetDir: fileDir });
+        if (processed.length > 0) {
+          const listing = processed.map((f) => f.path).join(', ');
+          webtermText = `[Attached files: ${listing}]\n\n${webtermText}`.trim();
+        }
+      }
       // "stop" in a webterm-routed thread interrupts the running turn
       // (claw-fs45) instead of being typed into the REPL as a prompt.
       if (/^(stop|abort|esc)$/i.test(text.trim())) {
@@ -212,9 +223,10 @@ export class SlackHandler {
       await this.webtermRuntime.handleMessage({
         channelId: channel,
         threadTs: thread_ts || ts,
-        text,
+        text: webtermText,
         userTs: ts,
         setThreadStatus: (status: string) => this.setThreadStatus(channel, thread_ts || ts, status),
+        uploadFiles: (paths: string[]) => this.getImageUploader().uploadImages(paths, channel, thread_ts || ts).then(() => {}),
         cwd: this.workingDirManager.getWorkingDirectory(channel, thread_ts, isDM ? user : undefined),
         slack: this.app.client,
       });
