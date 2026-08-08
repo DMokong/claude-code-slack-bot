@@ -1090,11 +1090,15 @@ describe("live-activity streaming (claw-1ta5)", () => {
     mock.emitPromptReady(id);
     await handlePromise;
 
-    // No second message — the placeholder became the answer.
-    expect(slack.posted).toHaveLength(1);
+    // The placeholder became the answer; the only other post is the tool
+    // recap line (claw-zlr4) — no duplicate answer message.
+    const nonRecap = slack.posted.filter((m) => !/🔧 \d+ tool call/.test(m.text));
+    expect(nonRecap).toHaveLength(1);
     expect(slack.textOf("msg-1")).toContain("all done!");
-    // The final write to the message is the answer, not a stale status line.
-    expect(slack.updated[slack.updated.length - 1].text).toContain("all done!");
+    // The final ANSWER write to the placeholder is the answer, not a stale
+    // status line.
+    const placeholderWrites = slack.updated.filter((u) => u.ts === "msg-1");
+    expect(placeholderWrites[placeholderWrites.length - 1].text).toContain("all done!");
   });
 
   it("delivers the answer via chat.update, never a new message", async () => {
@@ -1811,6 +1815,44 @@ describe("hardened turn-end + tripwire (claw-46g8)", () => {
     await turn;
     const continued = slack.posted.find((p) => p.text.includes("…continued") && p.text.includes("The late haiku."));
     expect(continued).toBeDefined();
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+});
+
+describe("tool timeline recap (claw-zlr4)", () => {
+  it("posts a muted recap line after a turn that used tools", async () => {
+    const mock = makeMockWebterm();
+    const slack = makeSlack();
+    const handler = new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10,
+    });
+    const turn = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "count files", slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const sid = mock.onlySessionId();
+    mock.setText(sid, buildBootGrid());
+    mock.emitPromptReady(sid);
+    await waitFor(() => mock.sessions.get(sid)!.inputs.some((i) => i.kind === "paste"));
+    mock.setText(sid, [
+      "❯ count files",
+      "",
+      "⏺ Bash(ls | wc -l)",
+      "  ⎿ 13",
+      "",
+      "⏺ There are 13 files.",
+      "",
+      "✻ Cooked for 3s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Opus 4.8 (1M context) │ ⏱ 3s",
+    ].join("\n"));
+    mock.emitOutputChunk(sid);
+    await turn;
+    const recap = slack.posted.find((m) => /🔧 1 tool call · \d+s/.test(m.text));
+    expect(recap).toBeDefined();
     await handler.shutdown({ killSessions: true });
   }, 10_000);
 });

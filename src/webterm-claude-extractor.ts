@@ -534,9 +534,9 @@ const SPINNER_ELAPSED_RE = new RegExp(`^[${SPINNER_GLYPHS}]\\s+\\S+\\s+for\\s+(\
 const SPINNER_VERB_RE = new RegExp(`^[${SPINNER_GLYPHS}]\\s+(\\S+…)$`);
 // Tool-call line: "⏺ Bash(…)" — a capitalized tool name immediately followed
 // by "(". Distinct from the assistant-response "⏺ <prose>" (no Name( shape).
-const TOOL_CALL_RE = /^⏺\s+([A-Z][A-Za-z0-9_]*)\(/;
+export const TOOL_CALL_RE = /^⏺\s+([A-Z][A-Za-z0-9_]*)\(/;
 
-const TOOL_LABELS: Record<string, string> = {
+export const TOOL_LABELS: Record<string, string> = {
   Bash: "🔧 running a command",
   Read: "📖 reading a file",
   Edit: "✏️ editing",

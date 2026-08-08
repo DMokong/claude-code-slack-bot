@@ -16,7 +16,9 @@
 
 import type { WebClient } from "@slack/web-api";
 import { Logger } from "./logger";
-import { extractTurn, extractSegments, isGridIdle, formatTurnForSlack, extractActivity, hasTurnEndFooter, type Segment } from "./webterm-claude-extractor";
+import { extractTurn, extractSegments, isGridIdle, formatTurnForSlack, extractActivity, hasTurnEndFooter, parseStatusRow, type ParsedStatusRow, type Segment } from "./webterm-claude-extractor";
+import { formatForSlack } from "./slack-mrkdwn";
+import { ToolTimeline } from "./tool-timeline";
 
 const DEFAULT_WEBTERM_URL = "http://127.0.0.1:7681";
 const DEFAULT_CLAUDE_CMD = "claude --dangerously-skip-permissions";
@@ -327,8 +329,14 @@ export class WebtermRuntimeHandler {
     // final message the old way.
     const statusTs = this.streamEnabled(req) ? await this.postStatusPlaceholder(req) : undefined;
     const statusCtl = { cancelled: false };
+    // Tool timeline + cost bookkeeping (claw-zlr4/claw-s5k5): every grid this
+    // turn sees feeds the timeline; the status row is captured at both ends of
+    // the turn so the recap and the turn log can report the cost delta.
+    const timeline = new ToolTimeline();
+    const turnStartedAt = Date.now();
+    let statusAtStart: ParsedStatusRow | null = null;
     const statusLoop = statusTs
-      ? this.runStatusLoop(session, req, statusTs, statusCtl)
+      ? this.runStatusLoop(session, req, statusTs, statusCtl, timeline)
       : Promise.resolve();
     // Stop the status loop and DRAIN any in-flight update before delivering the
     // final text, so the answer is always the last write to the message.
@@ -423,6 +431,9 @@ export class WebtermRuntimeHandler {
         return;
       }
 
+      timeline.observe(grid);
+      if (!statusAtStart) statusAtStart = parseStatusRow(grid);
+
       const gridChanged = grid !== lastGrid;
       if (gridChanged) { lastGrid = grid; lastChangeAt = Date.now(); }
 
@@ -470,9 +481,16 @@ export class WebtermRuntimeHandler {
           // Idle but nothing extracted — fall back to the whole-turn extractor
           // (covers answers with no ⏺ prose, and keeps the warning behavior).
           const turn = extractTurn(grid, req.text);
-          const text = turn ? formatTurnForSlack(turn) : "";
+          const text = turn ? formatForSlack(formatTurnForSlack(turn)) : "";
           await deliver(text || ":warning: claude did not produce a visible response.");
         }
+        const statusAtEnd = parseStatusRow(grid);
+        const costDelta =
+          statusAtEnd?.costUsd !== undefined && statusAtStart?.costUsd !== undefined
+            ? Math.max(0, statusAtEnd.costUsd - statusAtStart.costUsd)
+            : undefined;
+        const recap = timeline.recap(Date.now() - turnStartedAt, costDelta);
+        if (recap) await this.postReply(req, `_${recap}_`);
         await this.runTripwire(session, req, postedSegments);
         return;
       }
@@ -517,7 +535,7 @@ export class WebtermRuntimeHandler {
       blocks: missed.length,
     });
     for (const seg of missed) {
-      await this.postReply(req, `_(…continued)_\n${seg.text}`);
+      await this.postReply(req, `_(…continued)_\n${formatForSlack(seg.text)}`);
     }
   }
 
@@ -608,6 +626,7 @@ export class WebtermRuntimeHandler {
     req: HandleMessageOpts,
     statusTs: string,
     ctl: { cancelled: boolean },
+    timeline?: ToolTimeline,
   ): Promise<void> {
     let lastText = STATUS_PLACEHOLDER;
     let lastUpdate = 0;
@@ -620,7 +639,10 @@ export class WebtermRuntimeHandler {
       } catch {
         continue;
       }
-      const label = extractActivity(grid);
+      timeline?.observe(grid);
+      // Cumulative tool trail beats the single latest-activity guess — a
+      // 6-tool turn reads as a narrated sequence, not a flickering label.
+      const label = timeline?.trail() ?? extractActivity(grid);
       if (!label) continue;
       const text = `_${label}_`;
       if (text === lastText) continue;
@@ -710,7 +732,7 @@ export class WebtermRuntimeHandler {
 
     if (!state.streaming) {
       for (let i = postedSegments; i < settled; i++) {
-        if (segments[i].kind === "prose") await this.postReply(req, segments[i].text);
+        if (segments[i].kind === "prose") await this.postReply(req, formatForSlack(segments[i].text));
       }
       return { postedSegments: Math.max(postedSegments, settled), growingTs, growingIndex };
     }
@@ -735,28 +757,29 @@ export class WebtermRuntimeHandler {
     for (let i = postedSegments; i < settled; i++) {
       const seg = segments[i];
       if (seg.kind !== "prose") continue;
+      const formatted = formatForSlack(seg.text);
       if (i === growingIndex && growingTs) {
         // We were growing this block — finalize it in place with its final text.
-        const ok = await this.updateStreamMessage(req, growingTs, seg.text);
+        const ok = await this.updateStreamMessage(req, growingTs, formatted);
         // Fix 4: if the final chat.update fails, don't silently lose the final
         // delta — post it fresh, mirroring deliverReply's fallback.
-        if (!ok) await this.postReply(req, seg.text);
+        if (!ok) await this.postReply(req, formatted);
         growingTs = undefined;
         growingIndex = -1;
       } else if (growingTs && growingIndex === -1) {
         // First delivered block reuses the placeholder (resolve in place via
         // deliver, which has the postMessage fallback if chat.update fails).
-        await deliver(seg.text);
+        await deliver(formatted);
         growingTs = undefined; // placeholder now holds answer content
       } else {
-        await this.postFreshStreamMessage(req, seg.text);
+        await this.postFreshStreamMessage(req, formatted);
       }
     }
     postedSegments = Math.max(postedSegments, settled);
 
     // 2) Grow the trailing still-rendering prose block, if any.
     if (trailingIsGrowingProse) {
-      const text = segments[trailingIdx].text;
+      const text = formatForSlack(segments[trailingIdx].text);
       if (growingIndex === trailingIdx) {
         // Already tracking this block. Update it if we have a ts; if the fresh
         // post below previously failed (no ts, e.g. a Slack outage) do NOT spam
