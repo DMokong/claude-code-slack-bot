@@ -45,9 +45,11 @@ const DEFAULT_EXTRACT_STABLE_MS = 1_500;
 const RENDER_SETTLE_DEADLINE_MS = 120_000;
 // Sessions persist across restarts now (title adoption), so nothing else
 // cleans them up — reap slack-bot sessions silent past the idle threshold.
-// The conversation is lost but the next message recreates the session;
-// acceptable until `--resume` lands.
-const DEFAULT_IDLE_REAP_MS = 30 * 60_000;
+// With --resume (claw-m7bj) a reap costs only the next message's boot
+// latency, not the conversation, so the window is generous: 2h default
+// (~465MB RSS per idle claude session, measured 2026-08-08), tunable via
+// WEBTERM_IDLE_REAP_MS (claw-6mi2).
+const DEFAULT_IDLE_REAP_MS = Number(process.env.WEBTERM_IDLE_REAP_MS) || 2 * 60 * 60_000;
 const DEFAULT_REAP_INTERVAL_MS = 5 * 60_000;
 const BOOT_TIMEOUT_MS = 60_000;
 // claude persists each conversation as ~/.claude/projects/<cwd-slug>/<uuid>.jsonl.
