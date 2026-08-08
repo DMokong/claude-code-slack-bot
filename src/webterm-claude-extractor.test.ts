@@ -848,10 +848,10 @@ describe("hasTurnEndFooter / parseStatusRow (claw-46g8, claw-s5k5)", () => {
     const f = loadFixture("10-haiku-endstate");
     const row = parseStatusRow(f.grid);
     expect(row).not.toBeNull();
-    expect(row.model).toBe("Sonnet 4.6");
-    expect(row.contextPct).toBe(25);
-    expect(row.costUsd).toBeCloseTo(0.3);
-    expect(row.elapsed).toBe("26m7s");
+    expect(row!.model).toBe("Sonnet 4.6");
+    expect(row!.contextPct).toBe(25);
+    expect(row!.costUsd).toBeCloseTo(0.3);
+    expect(row!.elapsed).toBe("26m7s");
   });
 
   it("parseStatusRow returns null when no model row present", () => {

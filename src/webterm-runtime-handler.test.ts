@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { WebtermRuntimeHandler, shellSingleQuote, decodeSlackEntities } from "./webterm-runtime-handler";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
+
+let tssN = 0;
+function freshStorePath() {
+  return joinPath(mkdtempSync(joinPath(tmpdir(), "wrt-tss-")), `map-${tssN++}.json`);
+}
 
 // Mock webterm: records HTTP calls and lets the test drive SSE events
 // through a writable readable-stream pump.
@@ -262,6 +270,8 @@ describe("WebtermRuntimeHandler", () => {
     mock = makeMockWebterm();
     slack = makeSlack();
     handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       webtermUrl: "http://test.local",
       fetchImpl: mock.fetchImpl,
       cwd: "/tmp/test",
@@ -516,6 +526,8 @@ describe("WebtermRuntimeHandler", () => {
     // turn loop must POLL the grid for a settled answer, with prompt-ready only
     // as a fast-path accelerator.
     handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       webtermUrl: "http://test.local",
       fetchImpl: mock.fetchImpl,
       cwd: "/tmp/test",
@@ -548,6 +560,8 @@ describe("WebtermRuntimeHandler", () => {
       return mock.fetchImpl(input as any, init);
     };
     handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local",
@@ -565,6 +579,8 @@ describe("WebtermRuntimeHandler", () => {
     // paste (aggregated into the paste burst as a newline) — verified empirically
     // 2026-06-11 on v2.1.173. The handler must wait out the settle window.
     handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local",
@@ -727,6 +743,8 @@ describe("WebtermRuntimeHandler", () => {
       return mock.fetchImpl(input as any, init);
     };
     handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local",
@@ -975,6 +993,8 @@ describe("WebtermRuntimeHandler", () => {
 
   it("streams a long multi-step task with no fixed turn cap (claw-gxzq)", async () => {
     handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
@@ -1020,6 +1040,8 @@ describe("WebtermRuntimeHandler", () => {
 
   it("aborts a wedged session after the sliding inactivity window (claw-gxzq)", async () => {
     handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
@@ -1048,6 +1070,8 @@ describe("live-activity streaming (claw-1ta5)", () => {
     mock = makeMockWebterm();
     slack = makeSlack();
     handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local",
@@ -1113,6 +1137,8 @@ describe("live-activity streaming (claw-1ta5)", () => {
   it("falls back to a single message when the Slack client lacks chat.update", async () => {
     slack = makeSlack({ withUpdate: false });
     handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
@@ -1147,6 +1173,8 @@ describe("live-activity streaming (claw-1ta5)", () => {
 
   it("streams an error into the placeholder on turn timeout (no orphan placeholder)", async () => {
     const handler2 = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
@@ -1303,6 +1331,8 @@ describe("trailing-block settle gating (claw-gxzq idle-flap)", () => {
 
   it("streaming: a transient idle-looking frame must not finalize the trailing block", async () => {
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
@@ -1337,6 +1367,8 @@ describe("trailing-block settle gating (claw-gxzq idle-flap)", () => {
 
   it("discrete: the trailing block posts complete, never at its poison-frame text", async () => {
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
@@ -1374,6 +1406,8 @@ describe("trailing-block settle gating (claw-gxzq idle-flap)", () => {
     const body = load("09-turnend-flap-2-body");
 
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
@@ -1410,6 +1444,8 @@ describe("idle session reaping (claw-9nvw)", () => {
   beforeEach(() => {
     mock = makeMockWebterm();
     handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local",
@@ -1491,6 +1527,8 @@ describe("direct-spawn session creation (claw-3btg.1)", () => {
     mock = makeMockWebterm();
     slack = makeSlack();
     handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local",
@@ -1533,6 +1571,8 @@ describe("direct-spawn session creation (claw-3btg.1)", () => {
 
   it("legacy shell mode is unchanged: no command argv in the create body", async () => {
     const legacy = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       webtermUrl: "http://test.local",
       fetchImpl: mock.fetchImpl,
       cwd: "/tmp/test",
@@ -1571,6 +1611,8 @@ describe("wave2 primitives (claw-3btg.2/.3/.4/.8)", () => {
 
   it("/wait wakes the turn loop: completes with a huge poll interval and no post-answer prompt-ready", async () => {
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
@@ -1589,6 +1631,8 @@ describe("wave2 primitives (claw-3btg.2/.3/.4/.8)", () => {
 
   it("input to a retained dead session posts the exit cause (409 path)", async () => {
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
@@ -1616,6 +1660,8 @@ describe("wave2 primitives (claw-3btg.2/.3/.4/.8)", () => {
 
   it("stable-idle gate defers while the screen is still painting (lastOutputMs floor, claw-3btg.4)", async () => {
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
@@ -1639,6 +1685,8 @@ describe("wave2 primitives (claw-3btg.2/.3/.4/.8)", () => {
 
   it("mid-turn death posts the exit cause from the retained session (claw-3btg.2)", async () => {
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/test",
@@ -1676,6 +1724,8 @@ describe("SSE gate + event-driven wake (claw-kdqv, claw-rr2x)", () => {
     const mock = makeMockWebterm();
     const slack = makeSlack();
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
       turnEndQuietMs: 150, tripwireDelayMs: 10,
@@ -1701,6 +1751,8 @@ describe("SSE gate + event-driven wake (claw-kdqv, claw-rr2x)", () => {
     mock.flags.waitSupported = false;
     const slack = makeSlack();
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
       // Poll timer far beyond the test timeout: only an SSE wake can finish this turn fast.
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 8_000, reapIntervalMs: 0,
@@ -1755,6 +1807,8 @@ describe("hardened turn-end + tripwire (claw-46g8)", () => {
 
   async function bootTurn(mock: ReturnType<typeof makeMockWebterm>, slack: ReturnType<typeof makeSlack>, handlerOpts: any, text = "three parts") {
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       turnEndQuietMs: 150,
       tripwireDelayMs: 10,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
@@ -1824,6 +1878,8 @@ describe("tool timeline recap (claw-zlr4)", () => {
     const mock = makeMockWebterm();
     const slack = makeSlack();
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
       turnEndQuietMs: 150, tripwireDelayMs: 10,
@@ -1883,6 +1939,8 @@ describe("presence: reactions, typing status, abort (claw-fs45, claw-jfui)", () 
     const slack = makeSlackWithReactions();
     const statuses: string[] = [];
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
       turnEndQuietMs: 150, tripwireDelayMs: 10,
@@ -1905,6 +1963,8 @@ describe("presence: reactions, typing status, abort (claw-fs45, claw-jfui)", () 
     const mock = makeMockWebterm();
     const slack = makeSlackWithReactions();
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
       turnEndQuietMs: 150, tripwireDelayMs: 10, slidingInactivityMs: 100,
@@ -1924,6 +1984,8 @@ describe("presence: reactions, typing status, abort (claw-fs45, claw-jfui)", () 
     const mock = makeMockWebterm();
     const slack = makeSlackWithReactions();
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
       turnEndQuietMs: 150, tripwireDelayMs: 10,
@@ -1953,6 +2015,8 @@ describe("per-turn log + barrier de-noise (claw-za0o)", () => {
     const mock = makeMockWebterm();
     const slack = makeSlack();
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
       turnEndQuietMs: 150, tripwireDelayMs: 10,
@@ -1984,13 +2048,15 @@ describe("per-turn log + barrier de-noise (claw-za0o)", () => {
       const res = await origFetch(input, init);
       const url = typeof input === "string" ? input : (input as URL).toString();
       if (url.includes("/input") && res.status === 200) {
-        const body = await res.json();
+        const body = (await res.json()) as Record<string, unknown>;
         return new Response(JSON.stringify({ ...body, echoed: false }), { status: 200, headers: { "content-type": "application/json" } });
       }
       return res;
     };
     const slack = makeSlack();
     const handler = new WebtermRuntimeHandler({
+      sessionStorePath: freshStorePath(),
+      resumeFileCheck: () => false,
       webtermUrl: "http://test.local", fetchImpl, cwd: "/tmp/t",
       pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
       turnEndQuietMs: 150, tripwireDelayMs: 10,
@@ -2009,4 +2075,134 @@ describe("per-turn log + barrier de-noise (claw-za0o)", () => {
     warnSpy.mockRestore();
     await handler.shutdown({ killSessions: true });
   }, 10_000);
+});
+
+describe("session resume across reaps (claw-m7bj, claw-8262)", () => {
+  async function driveBoot(mock: ReturnType<typeof makeMockWebterm>, expectSessions = 1) {
+    await waitFor(() => mock.sessions.size === expectSessions && [...mock.sessions.values()].pop()!.sseController !== null);
+    const sid = [...mock.sessions.keys()].pop()!;
+    mock.setText(sid, buildBootGrid());
+    mock.emitPromptReady(sid);
+    await waitFor(() => mock.sessions.get(sid)!.inputs.some((i) => i.kind === "paste"));
+    return sid;
+  }
+  async function finishTurn(mock: ReturnType<typeof makeMockWebterm>, sid: string, text: string, answer: string) {
+    mock.setText(sid, buildTurnGrid(text, answer));
+    mock.emitOutputChunk(sid);
+  }
+
+  it("first boot pins --session-id; recreation after reap boots with --resume", async () => {
+    const storePath = freshStorePath();
+    const mock = makeMockWebterm();
+    const slack = makeSlack();
+    const mkHandler = () => new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10,
+      sessionStorePath: storePath,
+      resumeFileCheck: () => true,
+      directSpawnCommand: ["/usr/local/bin/claude", "--dangerously-skip-permissions"],
+    });
+    let handler = mkHandler();
+    const t1 = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "hi", slack: slack.client });
+    const sid1 = await driveBoot(mock);
+    await finishTurn(mock, sid1, "hi", "hello!");
+    await t1;
+    const create1 = mock.calls.find((c) => c.method === "POST" && c.url.endsWith("/api/sessions"));
+    const idFlag = create1!.body.command.indexOf("--session-id");
+    expect(idFlag).toBeGreaterThan(-1);
+    const uuid = create1!.body.command[idFlag + 1];
+    expect(uuid).toMatch(/^[0-9a-f-]{36}$/);
+    await handler.shutdown({ killSessions: true });
+
+    // Simulate reap: webterm session is gone; a NEW handler (or the reaper)
+    // must boot the thread's next session with --resume <same uuid>.
+    mock.sessions.clear();
+    mock.calls.length = 0;
+    handler = mkHandler();
+    const t2 = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "again", slack: slack.client });
+    const sid2 = await driveBoot(mock);
+    await finishTurn(mock, sid2, "again", "welcome back!");
+    await t2;
+    const create2 = mock.calls.find((c) => c.method === "POST" && c.url.endsWith("/api/sessions"));
+    const resumeFlag = create2!.body.command.indexOf("--resume");
+    expect(resumeFlag).toBeGreaterThan(-1);
+    expect(create2!.body.command[resumeFlag + 1]).toBe(uuid);
+    // No "fresh session" notice — this is the seamless path.
+    expect(slack.posted.some((m) => m.text.includes("fresh session"))).toBe(false);
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+
+  it("expired conversation (no session file) boots fresh and says so", async () => {
+    const storePath = freshStorePath();
+    const mock = makeMockWebterm();
+    const slack = makeSlack();
+    const mkHandler = (check: boolean) => new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10,
+      sessionStorePath: storePath,
+      resumeFileCheck: () => check,
+      directSpawnCommand: ["/usr/local/bin/claude"],
+    });
+    let handler = mkHandler(true);
+    const t1 = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "hi", slack: slack.client });
+    const sid1 = await driveBoot(mock);
+    await finishTurn(mock, sid1, "hi", "hello!");
+    await t1;
+    await handler.shutdown({ killSessions: true });
+
+    mock.sessions.clear();
+    mock.calls.length = 0;
+    handler = mkHandler(false); // session file no longer exists
+    const t2 = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "again", slack: slack.client });
+    const sid2 = await driveBoot(mock);
+    await finishTurn(mock, sid2, "again", "starting over.");
+    await t2;
+    expect(slack.posted.some((m) => m.text.includes("the earlier conversation expired"))).toBe(true);
+    await handler.shutdown({ killSessions: true });
+  }, 10_000);
+
+  it("a failed resume boot falls back to a fresh session with a notice", async () => {
+    const storePath = freshStorePath();
+    const mock = makeMockWebterm();
+    const slack = makeSlack();
+    const mkHandler = () => new WebtermRuntimeHandler({
+      webtermUrl: "http://test.local", fetchImpl: mock.fetchImpl, cwd: "/tmp/t",
+      pasteSettleMs: 5, extractStableMs: 10, turnPollMs: 20, reapIntervalMs: 0,
+      turnEndQuietMs: 150, tripwireDelayMs: 10,
+      sessionStorePath: storePath,
+      resumeFileCheck: () => true,
+      bootTimeoutMs: 300,
+      directSpawnCommand: ["/usr/local/bin/claude"],
+    });
+    let handler = mkHandler();
+    const t1 = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "hi", slack: slack.client });
+    const sid1 = await driveBoot(mock);
+    await finishTurn(mock, sid1, "hi", "hello!");
+    await t1;
+    await handler.shutdown({ killSessions: true });
+
+    mock.sessions.clear();
+    mock.calls.length = 0;
+    handler = mkHandler();
+    const t2 = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "again", slack: slack.client });
+    // FIRST boot attempt (--resume) gets NO prompt-ready → times out at 300ms →
+    // it is killed (DELETEd) and the fallback boots a SECOND session; wait on
+    // the second POST, then drive the surviving session.
+    const createCount = () => mock.calls.filter((c) => c.method === "POST" && c.url.endsWith("/api/sessions")).length;
+    await waitFor(() => createCount() === 2 && mock.sessions.size === 1, 5_000);
+    const sid2 = [...mock.sessions.keys()].pop()!;
+    await waitFor(() => mock.sessions.get(sid2)!.sseController !== null);
+    mock.setText(sid2, buildBootGrid());
+    mock.emitPromptReady(sid2);
+    await waitFor(() => mock.sessions.get(sid2)!.inputs.some((i) => i.kind === "paste"));
+    await finishTurn(mock, sid2, "again", "fresh start.");
+    await t2;
+    const creates = mock.calls.filter((c) => c.method === "POST" && c.url.endsWith("/api/sessions"));
+    expect(creates[0].body.command).toContain("--resume");
+    expect(creates[1].body.command).toContain("--session-id");
+    expect(slack.posted.some((m) => m.text.includes("couldn't resume the earlier conversation"))).toBe(true);
+    await handler.shutdown({ killSessions: true });
+  }, 15_000);
 });

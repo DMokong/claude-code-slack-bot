@@ -20,6 +20,10 @@ import { extractTurn, extractSegments, isGridIdle, formatTurnForSlack, extractAc
 import { formatForSlack } from "./slack-mrkdwn";
 import { queryCounter, queryCostHistogram, queryDurationHistogram } from "./telemetry";
 import { ToolTimeline } from "./tool-timeline";
+import { ThreadSessionStore } from "./thread-session-store";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 const DEFAULT_WEBTERM_URL = "http://127.0.0.1:7681";
 const DEFAULT_CLAUDE_CMD = "claude --dangerously-skip-permissions";
@@ -46,6 +50,13 @@ const RENDER_SETTLE_DEADLINE_MS = 120_000;
 const DEFAULT_IDLE_REAP_MS = 30 * 60_000;
 const DEFAULT_REAP_INTERVAL_MS = 5 * 60_000;
 const BOOT_TIMEOUT_MS = 60_000;
+// claude persists each conversation as ~/.claude/projects/<cwd-slug>/<uuid>.jsonl.
+// Resume is only attempted when that file actually exists — feeding claude a
+// --resume id it doesn't know could strand the PTY in an error/picker state.
+function defaultResumeFileCheck(cwd: string, uuid: string): boolean {
+  const slug = cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  return existsSync(join(homedir(), ".claude", "projects", slug, `${uuid}.jsonl`));
+}
 // The relay loop has no fixed turn cap (long agentic tasks stream for minutes).
 // Instead it aborts only when the session looks WEDGED: the grid stopped
 // changing, no active spinner, and claude is not idle at the prompt, for this
@@ -135,6 +146,12 @@ export interface WebtermRuntimeOpts {
   turnEndQuietMs?: number;
   // Delay before the post-final tripwire re-extract (claw-46g8); 0 disables.
   tripwireDelayMs?: number;
+  // Where the durable threadKey→claude-session-UUID map lives (claw-m7bj).
+  sessionStorePath?: string;
+  // Boot handshake deadline; tests set this small.
+  bootTimeoutMs?: number;
+  // Injectable for tests: does claude's session file exist for this cwd+uuid?
+  resumeFileCheck?: (cwd: string, uuid: string) => boolean;
   // Direct-spawn argv (claw-3btg.1): when non-empty, sessions are created with
   // webterm's command[] option so the PTY child IS claude — no wrapping shell
   // to fall through to when claude dies (H1 becomes structural). argv[0] must
@@ -162,6 +179,9 @@ interface WebtermSession {
   // True only between boot/adoption (where the grid was already verified) and
   // the first turn — lets handleMessage skip a redundant liveness fetch (H1).
   freshlyBooted: boolean;
+  // One-shot notice to post before this session's first reply (claw-8262):
+  // set when a thread's earlier conversation could not be resumed.
+  bootNotice?: string;
   // False until this session completes its first turn. The echo barrier races
   // claude's TUI boot on turn one, so an echoed:false there is expected noise,
   // not a wedge signal (claw-za0o).
@@ -204,6 +224,7 @@ export class WebtermRuntimeHandler {
   private logger = new Logger("WebtermRuntime");
   private opts: InternalOpts;
   private reapTimer: ReturnType<typeof setInterval> | null = null;
+  private store: ThreadSessionStore;
   // fetchImpl with the bearer token injected (no-op when no token configured).
   private authedFetch: typeof fetch;
 
@@ -226,9 +247,13 @@ export class WebtermRuntimeHandler {
       idleOutputFloorMs: opts.idleOutputFloorMs ?? DEFAULT_IDLE_OUTPUT_FLOOR_MS,
       turnEndQuietMs: opts.turnEndQuietMs ?? DEFAULT_TURN_END_QUIET_MS,
       tripwireDelayMs: opts.tripwireDelayMs ?? DEFAULT_TRIPWIRE_DELAY_MS,
+      sessionStorePath: opts.sessionStorePath ?? join(process.cwd(), "config", "thread-sessions.json"),
+      bootTimeoutMs: opts.bootTimeoutMs ?? BOOT_TIMEOUT_MS,
+      resumeFileCheck: opts.resumeFileCheck ?? defaultResumeFileCheck,
       directSpawnCommand: opts.directSpawnCommand ?? [],
       fetchImpl: opts.fetchImpl ?? fetch,
     };
+    this.store = new ThreadSessionStore(this.opts.sessionStorePath);
     const baseFetch = this.opts.fetchImpl;
     const token = this.opts.token;
     this.authedFetch = token
@@ -294,6 +319,11 @@ export class WebtermRuntimeHandler {
         continue;
       }
       session.freshlyBooted = false;
+
+      if (session.bootNotice) {
+        await this.postReply(req, session.bootNotice);
+        session.bootNotice = undefined;
+      }
 
       const turnPromise = this.takeTurn(session, req);
       session.inFlight = turnPromise.then(() => {}, () => {});
@@ -932,15 +962,24 @@ export class WebtermRuntimeHandler {
   // a user message into it was claw-akpn's lost-turn bug. Accept dialogs
   // (Enter confirms the pre-selected "Yes, I trust this folder") until the
   // real prompt appears or the boot deadline passes.
-  private async completeBootHandshake(session: WebtermSession): Promise<void> {
-    const deadline = Date.now() + BOOT_TIMEOUT_MS;
+  private async completeBootHandshake(session: WebtermSession, requireChrome = false): Promise<void> {
+    const deadline = Date.now() + this.opts.bootTimeoutMs;
     let target = 1;
     for (;;) {
       await this.waitForPromptReady(session, target, Math.max(1, deadline - Date.now()));
       const grid = await this.fetchGridText(session.id);
-      if (!TRUST_DIALOG_RE.test(grid)) return;
-      this.logger.info("Trust-folder dialog at boot — accepting", { sessionId: session.id });
-      await this.sendKeys(session.id, ["Enter"], true);
+      if (TRUST_DIALOG_RE.test(grid)) {
+        this.logger.info("Trust-folder dialog at boot — accepting", { sessionId: session.id });
+        await this.sendKeys(session.id, ["Enter"], true);
+        target = session.promptReadyCount + 1;
+        continue;
+      }
+      // Guard for --resume gone wrong (claw-m7bj): a resume boot only counts
+      // as complete when claude's REPL chrome is on screen — an invalid id can
+      // leave a picker/error screen instead, which never re-fires
+      // prompt-ready, so this path ends at the deadline and the caller falls
+      // back to a fresh session. Fresh boots keep the legacy contract.
+      if (!requireChrome || CLAUDE_CHROME_RE.test(grid)) return;
       target = session.promptReadyCount + 1;
     }
   }
@@ -957,8 +996,9 @@ export class WebtermRuntimeHandler {
     );
   }
 
-  private buildBootCmd(channelId: string, threadTs: string | undefined): string {
-    return `${this.opts.claudeCmd} --append-system-prompt ${shellSingleQuote(this.buildBootCtx(channelId, threadTs))}`;
+  private buildBootCmd(channelId: string, threadTs: string | undefined, sessionArgs: string[] = []): string {
+    const extra = sessionArgs.length ? ` ${sessionArgs.join(" ")}` : "";
+    return `${this.opts.claudeCmd} --append-system-prompt ${shellSingleQuote(this.buildBootCtx(channelId, threadTs))}${extra}`;
   }
 
   private async adoptOrCreateSession(
@@ -1047,11 +1087,50 @@ export class WebtermRuntimeHandler {
     return session;
   }
 
+  // Pick session identity from the durable store (claw-m7bj): resume the
+  // thread's claude conversation when its session file survives, otherwise
+  // boot fresh under a pinned UUID so a FUTURE reap can resume it. A failed
+  // resume boot falls back to fresh once, with a notice for the thread
+  // (claw-8262).
   private async createSession(
     threadKey: string,
     channelId: string,
     threadTs: string | undefined,
     cwd?: string,
+  ): Promise<WebtermSession> {
+    const effectiveCwd = cwd ?? this.opts.cwd;
+    const prior = this.store.get(threadKey);
+    const canResume = prior !== undefined && this.opts.resumeFileCheck(effectiveCwd, prior);
+    if (prior && canResume) {
+      try {
+        const session = await this.bootSession(threadKey, channelId, threadTs, cwd, ["--resume", prior]);
+        this.logger.info("Resumed thread conversation", { threadKey, claudeSession: prior });
+        return session;
+      } catch (err) {
+        this.logger.warn("Resume boot failed — falling back to a fresh session", {
+          threadKey,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        const fresh = this.store.assign(threadKey);
+        const session = await this.bootSession(threadKey, channelId, threadTs, cwd, ["--session-id", fresh]);
+        session.bootNotice = "_(fresh session — couldn't resume the earlier conversation)_";
+        return session;
+      }
+    }
+    const uuid = prior ?? this.store.assign(threadKey);
+    const session = await this.bootSession(threadKey, channelId, threadTs, cwd, ["--session-id", uuid]);
+    if (prior && !canResume) {
+      session.bootNotice = "_(fresh session — the earlier conversation expired)_";
+    }
+    return session;
+  }
+
+  private async bootSession(
+    threadKey: string,
+    channelId: string,
+    threadTs: string | undefined,
+    cwd: string | undefined,
+    sessionArgs: string[],
   ): Promise<WebtermSession> {
     const directSpawn = this.opts.directSpawnCommand.length > 0;
     const res = await this.authedFetch(`${this.opts.webtermUrl}/api/sessions`, {
@@ -1065,7 +1144,7 @@ export class WebtermRuntimeHandler {
         // Direct spawn: claude is the PTY child; context rides as a raw argv
         // element (no shell-quoting layer between us and claude).
         ...(directSpawn
-          ? { command: [...this.opts.directSpawnCommand, "--append-system-prompt", this.buildBootCtx(channelId, threadTs)] }
+          ? { command: [...this.opts.directSpawnCommand, "--append-system-prompt", this.buildBootCtx(channelId, threadTs), ...sessionArgs] }
           : {}),
       }),
     });
@@ -1088,9 +1167,9 @@ export class WebtermRuntimeHandler {
     // Legacy shell mode: boot claude by typing the command into the shell.
     // Direct-spawn mode skips this — claude IS the PTY child and is already
     // booting when the POST returns.
-    if (!directSpawn) await this.sendInput(session.id, this.buildBootCmd(channelId, threadTs), { quietEchoWarn: true });
+    if (!directSpawn) await this.sendInput(session.id, this.buildBootCmd(channelId, threadTs, sessionArgs), { quietEchoWarn: true });
     try {
-      await this.completeBootHandshake(session);
+      await this.completeBootHandshake(session, sessionArgs[0] === "--resume");
     } catch (err) {
       sseAbort.abort();
       await this.killWebtermSession(session.id).catch(() => {});
