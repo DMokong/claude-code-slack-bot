@@ -45,7 +45,14 @@ const TIMEOUT_MS = Number(arg("timeout-ms", "600000"));
 // this line changes all six. The always-on Slack bot runs opus separately via
 // WEBTERM_DIRECT_SPAWN_CMD; these unattended jobs are summarization-shaped and
 // scheduled, so they stay on sonnet.
-const CLAUDE_CMD = arg("claude-cmd", "claude --model claude-sonnet-5 --dangerously-skip-permissions")!;
+//
+// Permissions: --permission-mode auto, NOT --dangerously-skip-permissions
+// (Dustin, 2026-08-09). These six run unattended at fixed hours with nobody to
+// answer a prompt, so this was validated through this exact runner first — a
+// turn completed unprompted, including a shell write outside the cwd. Residual
+// risk if auto ever does prompt: the turn stalls rather than erroring, and
+// TIMEOUT_MS below is the only thing that converts that into a logged failure.
+const CLAUDE_CMD = arg("claude-cmd", "claude --model claude-sonnet-5 --permission-mode auto")!;
 const KEEP_ALIVE = process.argv.includes("--keep-alive");
 const WEBTERM_URL = process.env.WEBTERM_URL ?? "http://127.0.0.1:7681";
 if (!JOB || !PROMPT_FILE) { console.error("usage: --job <name> --prompt-file <path> [--cwd] [--timeout-ms] [--claude-cmd] [--keep-alive]"); process.exit(1); }

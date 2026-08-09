@@ -233,8 +233,8 @@ function makeSlack(opts: { withUpdate?: boolean } = {}) {
 function buildBootGrid(): string {
   // Boot screen: prompt is visible, no user input echoed yet, no ⏺ block.
   return [
-    "claude --dangerously-skip-permissions",
-    "[webterm:test] user@host claudeclaw % claude --dangerously-skip-permissions",
+    "claude --permission-mode auto",
+    "[webterm:test] user@host claudeclaw % claude --permission-mode auto",
     " ▐▛███▜▌   Claude Code v2.1.156",
     "",
     "────────────────────────────────────────",
@@ -246,7 +246,7 @@ function buildBootGrid(): string {
 
 function buildTurnGrid(userInput: string, assistant: string): string {
   return [
-    "claude --dangerously-skip-permissions",
+    "claude --permission-mode auto",
     "[webterm:test] user@host claudeclaw %",
     "",
     `❯ ${userInput}`,
@@ -772,7 +772,7 @@ describe("WebtermRuntimeHandler", () => {
     // dialog is grid-stable, so prompt-ready fires ON it — without detection,
     // turn 1 would be typed into the dialog.
     const TRUST_DIALOG_GRID = [
-      "claude --dangerously-skip-permissions",
+      "claude --permission-mode auto",
       " Accessing workspace:",
       "",
       " /tmp/proj-x",
@@ -916,7 +916,7 @@ describe("WebtermRuntimeHandler", () => {
     // would execute it as a shell command. The handler must detect (no model
     // status row) and recreate instead.
     mock.seedSession("sess-dead-claude", "slack-bot C1::T1", [
-      "[webterm:test] user@host claudeclaw % claude --dangerously-skip-permissions",
+      "[webterm:test] user@host claudeclaw % claude --permission-mode auto",
       "[webterm:test] user@host claudeclaw %",
     ].join("\n"));
 
@@ -1585,7 +1585,7 @@ describe("direct-spawn session creation (claw-3btg.1)", () => {
       pasteSettleMs: 5,
       extractStableMs: 10,
       turnPollMs: 20,
-      directSpawnCommand: ["/opt/bin/claude", "--dangerously-skip-permissions"],
+      directSpawnCommand: ["/opt/bin/claude", "--permission-mode", "auto"],
     });
   });
 
@@ -1603,11 +1603,13 @@ describe("direct-spawn session creation (claw-3btg.1)", () => {
     await p;
 
     const create = mock.calls.find((c) => c.method === "POST" && c.url.endsWith("/api/sessions"))!;
-    expect(create.body.command.slice(0, 2)).toEqual(["/opt/bin/claude", "--dangerously-skip-permissions"]);
-    expect(create.body.command[2]).toBe("--append-system-prompt");
+    // --permission-mode auto is TWO argv elements where the old bypass flag was
+    // one, so everything after it shifted by one index.
+    expect(create.body.command.slice(0, 3)).toEqual(["/opt/bin/claude", "--permission-mode", "auto"]);
+    expect(create.body.command[3]).toBe("--append-system-prompt");
     // Channel context rides as a raw argv element — no shell quoting layer.
-    expect(create.body.command[3]).toContain("channel ID: C1");
-    expect(create.body.command[3]).toContain("thread: 1234.5");
+    expect(create.body.command[4]).toContain("channel ID: C1");
+    expect(create.body.command[4]).toContain("thread: 1234.5");
 
     const inputs = mock.sessions.get(id)!.inputs;
     expect(inputs[0].data).toContain("what is 2+2?");
@@ -2149,7 +2151,7 @@ describe("session resume across reaps (claw-m7bj, claw-8262)", () => {
       turnEndQuietMs: 150, tripwireDelayMs: 10,
       sessionStorePath: storePath,
       resumeFileCheck: () => true,
-      directSpawnCommand: ["/usr/local/bin/claude", "--dangerously-skip-permissions"],
+      directSpawnCommand: ["/usr/local/bin/claude", "--permission-mode", "auto"],
     });
     let handler = mkHandler();
     const t1 = handler.handleMessage({ channelId: "C1", threadTs: "1.0", text: "hi", slack: slack.client });

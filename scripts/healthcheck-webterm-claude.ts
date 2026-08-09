@@ -43,7 +43,7 @@ const authHeaders: Record<string, string> = TOKEN ? { authorization: `Bearer ${T
 const WEBTERM_URL = process.env.WEBTERM_URL ?? "http://127.0.0.1:7681";
 const WEBTERM_UI_URL = process.env.WEBTERM_UI_URL ?? "http://127.0.0.1:5173";
 const CWD = process.env.WEBTERM_CWD ?? `${process.env.HOME}/projects/claudeclaw`;
-const CLAUDE_CMD = process.env.WEBTERM_CLAUDE_CMD ?? "claude --dangerously-skip-permissions";
+const CLAUDE_CMD = process.env.WEBTERM_CLAUDE_CMD ?? "claude --permission-mode auto";
 // Direct-spawn mode (claw-3btg.1/.12): when set, mirror production — claude IS
 // the PTY child via command[] argv; no boot command is typed into a shell.
 const DIRECT_SPAWN_CMD = (process.env.WEBTERM_DIRECT_SPAWN_CMD ?? "").split(/\s+/).filter(Boolean);

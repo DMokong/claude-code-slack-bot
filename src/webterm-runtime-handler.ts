@@ -26,7 +26,8 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 const DEFAULT_WEBTERM_URL = "http://127.0.0.1:7681";
-const DEFAULT_CLAUDE_CMD = "claude --dangerously-skip-permissions";
+// --permission-mode auto, not the blanket bypass (Dustin, 2026-08-09).
+const DEFAULT_CLAUDE_CMD = "claude --permission-mode auto";
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 40;
 const DEFAULT_IDLE_MS = 1500;

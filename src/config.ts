@@ -87,10 +87,11 @@ export const config = {
     routeAll: process.env.WEBTERM_ROUTE_ALL === '1' || process.env.WEBTERM_ROUTE_ALL === 'true',
     url: process.env.WEBTERM_URL || 'http://127.0.0.1:7681',
     cwd: process.env.WEBTERM_CWD || `${process.env.HOME}/projects/claudeclaw`,
-    claudeCmd: process.env.WEBTERM_CLAUDE_CMD || 'claude --dangerously-skip-permissions',
+    // --permission-mode auto, not the blanket bypass (Dustin, 2026-08-09).
+    claudeCmd: process.env.WEBTERM_CLAUDE_CMD || 'claude --permission-mode auto',
     // Direct-spawn argv (claw-3btg.1): whitespace-separated, argv[0] must be
     // an ABSOLUTE path on the webterm server's WEBTERM_SPAWN_ALLOWLIST, e.g.
-    // WEBTERM_DIRECT_SPAWN_CMD="/Users/me/.local/bin/claude --dangerously-skip-permissions".
+    // WEBTERM_DIRECT_SPAWN_CMD="/Users/me/.local/bin/claude --permission-mode auto".
     // Unset = legacy mode (type claudeCmd into the session shell).
     directSpawnCmd: (process.env.WEBTERM_DIRECT_SPAWN_CMD || '')
       .split(/\s+/)

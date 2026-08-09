@@ -79,6 +79,14 @@ export class ClaudeHandler {
     const options: any = {
       outputFormat: 'stream-json',
       includePartialMessages: true,
+      // NOT migrated to 'auto' with the rest of the codebase (Dustin,
+      // 2026-08-09) — deliberately, not an oversight. The installed SDK's
+      // PermissionMode union is 'default' | 'acceptEdits' | 'bypassPermissions'
+      // | 'plan' (@anthropic-ai/claude-code 1.0.128); the CLI accepts 'auto'
+      // but this SDK does not, so setting it here would not typecheck and has
+      // no defined runtime meaning. Low urgency: with WEBTERM_ROUTE_ALL=1 this
+      // SDK path is only reached if the webterm runtime fails to initialise.
+      // Revisit when the SDK's union gains 'auto'.
       permissionMode: 'bypassPermissions',
       pathToClaudeCodeExecutable: process.env.CLAUDE_EXECUTABLE || 'claude',
       model: process.env.CLAUDE_MODEL || 'claude-opus-5',
