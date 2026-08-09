@@ -38,7 +38,14 @@ const JOB = arg("job");
 const PROMPT_FILE = arg("prompt-file");
 const CWD = arg("cwd", `${process.env.HOME}/projects/claudeclaw`)!;
 const TIMEOUT_MS = Number(arg("timeout-ms", "600000"));
-const CLAUDE_CMD = arg("claude-cmd", "claude --model claude-sonnet-4-6 --dangerously-skip-permissions")!;
+// Batch/launchd default: sonnet, latest generation (Dustin, 2026-08-09 — always
+// the newest sonnet/opus, never haiku). This default drives SIX claudeclaw
+// launchd jobs (ai-digest, email-triage, finance-ingest, health-weekly,
+// morning-brief, retrospective) — none of them pass --claude-cmd, so editing
+// this line changes all six. The always-on Slack bot runs opus separately via
+// WEBTERM_DIRECT_SPAWN_CMD; these unattended jobs are summarization-shaped and
+// scheduled, so they stay on sonnet.
+const CLAUDE_CMD = arg("claude-cmd", "claude --model claude-sonnet-5 --dangerously-skip-permissions")!;
 const KEEP_ALIVE = process.argv.includes("--keep-alive");
 const WEBTERM_URL = process.env.WEBTERM_URL ?? "http://127.0.0.1:7681";
 if (!JOB || !PROMPT_FILE) { console.error("usage: --job <name> --prompt-file <path> [--cwd] [--timeout-ms] [--claude-cmd] [--keep-alive]"); process.exit(1); }

@@ -57,7 +57,8 @@ export const config = {
   claude: {
     useBedrock: process.env.CLAUDE_CODE_USE_BEDROCK === '1',
     useVertex: process.env.CLAUDE_CODE_USE_VERTEX === '1',
-    model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+    // Latest generation only — sonnet or opus, never haiku (Dustin, 2026-08-09).
+    model: process.env.CLAUDE_MODEL || 'claude-opus-5',
   },
   streaming: {
     mode: (process.env.SLACK_STREAMING_MODE || 'native') as 'native' | 'legacy' | 'off',
