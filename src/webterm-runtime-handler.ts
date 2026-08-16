@@ -471,6 +471,14 @@ export class WebtermRuntimeHandler {
     // placeholder is unbound (available for the first delivered block).
     let growingTs: string | undefined = statusTs;
     let growingIndex = -1;
+    // claw-yem3: did any Slack write this turn actually carry prose the user
+    // can see? postedSegments is NOT that signal — it only counts *settled*
+    // blocks, so a trailing block that grew in-place via chat.update leaves it
+    // at 0. When a long answer then scrolls out of the 40-row viewport,
+    // extractSegments drops to 0 mid-turn and the turn-end fallback below would
+    // fire and overwrite the visible answer with a warning. Losing the trailing
+    // delta is a degraded turn; overwriting delivered prose is data loss.
+    let deliveredProse = false;
     // Grow-update throttle (claw-uu2u A1): waitForTurnSignal now wakes on
     // every SSE output-chunk (~50ms cadence), so without this the growing
     // branch below can chat.update several times/sec — past Slack's ~50/min
@@ -512,7 +520,12 @@ export class WebtermRuntimeHandler {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.error("grid fetch failed mid-turn", { sessionId: session.id, error: msg });
         await stopStatus();
-        if (postedSegments === 0) await deliver(`:warning: lost the webterm session mid-turn: \`${msg}\``);
+        // claw-yem3: same clobber hazard as turn-end — deliver() writes through
+        // the placeholder. If prose already landed, report the failure in a NEW
+        // message so the user keeps both the answer and the bad news.
+        const lost = `:warning: lost the webterm session mid-turn: \`${msg}\``;
+        if (deliveredProse) await this.postReply(req, lost);
+        else if (postedSegments === 0) await deliver(lost);
         return;
       }
 
@@ -556,15 +569,19 @@ export class WebtermRuntimeHandler {
       // trailing still-rendering block in place (Task 3); the trailing block
       // only FINALIZES when the turn is provably done — finalization advances
       // the high-water mark, which is unrepairable if the block was partial.
-      ({ postedSegments, growingTs, growingIndex, lastGrowText, lastGrowUpdateAt } = await this.relayNewSegments(
+      ({ postedSegments, growingTs, growingIndex, lastGrowText, lastGrowUpdateAt, deliveredProse } = await this.relayNewSegments(
         session, req, grid, deliver, stopStatus,
-        { postedSegments, growingTs, growingIndex, streaming, stableIdle: turnDone, lastGrowText, lastGrowUpdateAt },
+        { postedSegments, growingTs, growingIndex, streaming, stableIdle: turnDone, lastGrowText, lastGrowUpdateAt, deliveredProse },
       ));
       deliveredSegments = postedSegments;
 
       if (turnDone) {
         // stopStatus was called above at idleObservations === 1.
-        if (postedSegments === 0) {
+        // claw-yem3: `!deliveredProse` is the real guard — postedSegments alone
+        // misses a trailing block that only ever grew in place, and deliver()
+        // writes through the SAME placeholder ts, so firing here would
+        // chat.update the user's visible answer into a warning.
+        if (postedSegments === 0 && !deliveredProse) {
           // Idle but nothing extracted — fall back to the whole-turn extractor
           // (covers answers with no ⏺ prose, and keeps the warning behavior).
           const turn = extractTurn(grid, req.text);
@@ -590,7 +607,9 @@ export class WebtermRuntimeHandler {
       ) {
         this.logger.error("Turn wedged — no grid change within inactivity window", { sessionId: session.id });
         await stopStatus();
-        if (postedSegments === 0) await deliver(":warning: claude stopped responding.");
+        // claw-yem3: see above — never overwrite prose the user can already see.
+        if (deliveredProse) await this.postReply(req, ":warning: claude stopped responding.");
+        else if (postedSegments === 0) await deliver(":warning: claude stopped responding.");
         return;
       }
     }
@@ -917,6 +936,8 @@ export class WebtermRuntimeHandler {
       // split below for which writes it gates.
       lastGrowText: string;
       lastGrowUpdateAt: number;
+      // claw-yem3: sticky once any prose write lands in Slack.
+      deliveredProse: boolean;
     },
   ): Promise<{
     postedSegments: number;
@@ -924,16 +945,19 @@ export class WebtermRuntimeHandler {
     growingIndex: number;
     lastGrowText: string;
     lastGrowUpdateAt: number;
+    deliveredProse: boolean;
   }> {
-    let { postedSegments, growingTs, growingIndex, lastGrowText, lastGrowUpdateAt } = state;
+    let { postedSegments, growingTs, growingIndex, lastGrowText, lastGrowUpdateAt, deliveredProse } = state;
     const segments = extractSegments(grid, req.text);
     const settled = state.stableIdle ? segments.length : Math.max(0, segments.length - 1);
 
     if (!state.streaming) {
       for (let i = postedSegments; i < settled; i++) {
-        if (segments[i].kind === "prose") await this.postReply(req, formatForSlack(segments[i].text));
+        if (segments[i].kind !== "prose") continue;
+        await this.postReply(req, formatForSlack(segments[i].text));
+        deliveredProse = true;
       }
-      return { postedSegments: Math.max(postedSegments, settled), growingTs, growingIndex, lastGrowText, lastGrowUpdateAt };
+      return { postedSegments: Math.max(postedSegments, settled), growingTs, growingIndex, lastGrowText, lastGrowUpdateAt, deliveredProse };
     }
 
     // Is the held-back trailing block a still-rendering prose block to grow?
@@ -963,15 +987,18 @@ export class WebtermRuntimeHandler {
         // Fix 4: if the final chat.update fails, don't silently lose the final
         // delta — post it fresh, mirroring deliverReply's fallback.
         if (!ok) await this.postReply(req, formatted);
+        deliveredProse = true;
         growingTs = undefined;
         growingIndex = -1;
       } else if (growingTs && growingIndex === -1) {
         // First delivered block reuses the placeholder (resolve in place via
         // deliver, which has the postMessage fallback if chat.update fails).
         await deliver(formatted);
+        deliveredProse = true;
         growingTs = undefined; // placeholder now holds answer content
       } else {
         await this.postFreshStreamMessage(req, formatted);
+        deliveredProse = true;
       }
     }
     postedSegments = Math.max(postedSegments, settled);
@@ -992,7 +1019,7 @@ export class WebtermRuntimeHandler {
         // e.g. a Slack outage) do NOT spam a new message every tick — leave
         // it to finalize via the finalize loop once it settles (Fix 3).
         if (growingTs && canGrowUpdate) {
-          await this.updateStreamMessage(req, growingTs, text);
+          if (await this.updateStreamMessage(req, growingTs, text)) deliveredProse = true;
           lastGrowText = text;
           lastGrowUpdateAt = Date.now();
         }
@@ -1000,7 +1027,7 @@ export class WebtermRuntimeHandler {
         // Bind the placeholder to this growing block.
         growingIndex = trailingIdx;
         if (canGrowUpdate) {
-          await this.updateStreamMessage(req, growingTs, text);
+          if (await this.updateStreamMessage(req, growingTs, text)) deliveredProse = true;
           lastGrowText = text;
           lastGrowUpdateAt = Date.now();
         }
@@ -1010,13 +1037,17 @@ export class WebtermRuntimeHandler {
         // subsequent ticks (Fix 3). A fresh message only opens once per block
         // transition, not on a throttle cadence, so it bypasses canGrowUpdate.
         growingTs = await this.postFreshStreamMessage(req, text);
+        // Only a post that actually landed (returned a ts) put prose in front
+        // of the user — a failed post must NOT suppress the turn-end fallback,
+        // or a Slack outage would leave the thread with nothing at all.
+        if (growingTs) deliveredProse = true;
         growingIndex = trailingIdx;
         lastGrowText = text;
         lastGrowUpdateAt = Date.now();
       }
     }
 
-    return { postedSegments, growingTs, growingIndex, lastGrowText, lastGrowUpdateAt };
+    return { postedSegments, growingTs, growingIndex, lastGrowText, lastGrowUpdateAt, deliveredProse };
   }
 
   // Post a brand-new streamed message and return its ts (best-effort; returns

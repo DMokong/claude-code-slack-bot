@@ -1270,6 +1270,58 @@ describe("live-activity streaming (claw-1ta5)", () => {
     expect(slack.posted).toHaveLength(1);
   });
 
+  // claw-yem3 (2026-08-14): an answer longer than the 40-row viewport scrolls
+  // out of the grid, so extractSegments drops to 0 MID-TURN. Because the
+  // growing trailing block is written to Slack via chat.update but never
+  // advances postedSegments (only `settled` does), turn-end saw
+  // postedSegments === 0 and fired the "no visible response" fallback through
+  // deliver() — which reuses the placeholder ts and chat.update'd the user's
+  // real, already-visible answer into a warning. Live-observed in
+  // C0AHLUV2Y83::1786663777.560919: the message showed prose, then flipped to
+  // the warning with Slack's "(edited)" tag.
+  //
+  // Reproduced deterministically outside the test suite via
+  // HEALTHCHECK_PROMPT="list the numbers 1 to 60, one per line" against the
+  // real webterm: grid came back 647 bytes, empty extraction, FAIL.
+  //
+  // The rule this locks in: NEVER overwrite prose already delivered to Slack.
+  // The fallback is for turns that produced nothing, not for turns whose output
+  // we merely lost track of.
+  it("never overwrites already-delivered prose with the fallback when output scrolls off (claw-yem3)", async () => {
+    const handlePromise = handler.handleMessage({ channelId: "C1", threadTs: "T1", text: "tell me", slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    // A long answer grows into the placeholder — the user can see this text.
+    mock.setText(id, ["❯ tell me", "", "⏺ The long answer the user actually read."].join("\n"));
+    await waitFor(() => (slack.textOf("msg-1") ?? "").includes("actually read"));
+
+    // Now it scrolls off the viewport: the turn-end grid keeps the chrome and
+    // the completion footer, but the ⏺ block is gone. extractSegments → 0.
+    mock.setText(id, [
+      "claude --permission-mode auto",
+      "[webterm:test] user@host claudeclaw %",
+      "",
+      "❯ tell me",
+      "",
+      "✻ Cooked for 1s",
+      "",
+      "────────────────────────────────────────",
+      "❯",
+      "────────────────────────────────────────",
+      "   Opus 4.8 (1M context) │ ⏱ 5s",
+    ].join("\n"));
+    mock.emitPromptReady(id);
+    await handlePromise;
+
+    // The delivered answer must survive. Losing the trailing delta is a
+    // degraded turn; replacing the whole answer with a warning is data loss.
+    expect(slack.textOf("msg-1")).not.toContain("did not produce a visible response");
+    expect(slack.textOf("msg-1")).toContain("actually read");
+  });
+
   it("throttles the growing-block chat.update path to MIN_STATUS_UPDATE_MS (claw-uu2u A1)", async () => {
     // Large turnPollMs/statusPollMs so only emitOutputChunk drives the relay
     // loop — isolates the SSE-cadence wake path A1 targets (real webterm
