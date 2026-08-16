@@ -29,7 +29,14 @@ const DEFAULT_WEBTERM_URL = "http://127.0.0.1:7681";
 // --permission-mode auto, not the blanket bypass (Dustin, 2026-08-09).
 const DEFAULT_CLAUDE_CMD = "claude --permission-mode auto";
 const DEFAULT_COLS = 120;
-const DEFAULT_ROWS = 40;
+// Viewport height. 40 rows meant any answer longer than ~40 lines scrolled its
+// own head out of the grid mid-turn, which is the trigger for the shrink the
+// merge above now survives (claw-yem3 follow-up). The PTY is headless — nothing
+// renders these rows — so a taller window costs only the bytes of a grid fetch
+// and keeps whole answers extractable instead of relying on the stitch.
+// Scrollback is NOT an alternative here: claude's full-screen TUI uses the
+// alternate screen buffer, which has none.
+const DEFAULT_ROWS = 200;
 const DEFAULT_IDLE_MS = 1500;
 const DEFAULT_PROMPT_POLL_MS = 400;
 const DEFAULT_PROMPT_STABLE_POLLS = 3;
@@ -97,6 +104,42 @@ const CLAUDE_CHROME_RE = /(Opus|Fable|Sonnet|Haiku)\s+\d/;
 // then resolve the SAME message into the final answer.
 const STATUS_PLACEHOLDER = "_🐾 on it…_";
 const DEFAULT_STATUS_POLL_MS = 2_000;
+
+// Shortest overlap we'll trust when stitching a slid viewport window. Below
+// this, a coincidental match (a repeated word, a common line prefix) is more
+// likely than a genuine overlap, and a wrong stitch corrupts the message.
+const MIN_STITCH_OVERLAP = 24;
+
+/**
+ * Merge the next extraction of a streamed block into what Slack currently
+ * displays. A streamed message may GROW, never shrink (claw-yem3 follow-up).
+ *
+ * Why this exists: the block text is re-derived from the terminal VIEWPORT on
+ * every tick, and fetchGridForRelay only consults scrollback when the viewport
+ * yields ZERO segments. Once a long answer's head scrolls past the window, the
+ * same block re-extracts SHORTER — still non-zero, so no scrollback fallback —
+ * and an unconditional chat.update would replace the answer the user is reading
+ * with its own tail. Scrollback can't rescue it either: claude's full-screen
+ * TUI renders in the alternate screen buffer, which has no scrollback.
+ *
+ * Prose blocks are append-only, so the sliding window always overlaps what we
+ * already have. Stitching on that overlap keeps the head AND picks up the new
+ * tail — strictly better than "refuse to shrink", which would hold the message
+ * at its peak and silently drop everything rendered after the scroll.
+ */
+export function mergeStreamedText(displayed: string, next: string): string {
+  if (!displayed) return next;
+  if (!next) return displayed;
+  if (next.startsWith(displayed)) return next; // ordinary growth
+  if (displayed.includes(next)) return displayed; // pure truncation, nothing new
+  // Sliding window: longest suffix of `displayed` that prefixes `next`.
+  const max = Math.min(displayed.length, next.length);
+  for (let k = max; k >= MIN_STITCH_OVERLAP; k--) {
+    if (displayed.endsWith(next.slice(0, k))) return displayed + next.slice(k);
+  }
+  // No trustworthy overlap. Never shrink: keep whichever carries more.
+  return next.length > displayed.length ? next : displayed;
+}
 // Floor between status updates — keeps us well under Slack's chat.update rate
 // limit even on long tool-heavy turns.
 const MIN_STATUS_UPDATE_MS = 1_500;
@@ -982,20 +1025,26 @@ export class WebtermRuntimeHandler {
       if (seg.kind !== "prose") continue;
       const formatted = formatForSlack(seg.text);
       if (i === growingIndex && growingTs) {
-        // We were growing this block — finalize it in place with its final text.
-        const ok = await this.updateStreamMessage(req, growingTs, formatted);
+        // We were growing this block — finalize it in place with its final
+        // text, merged so a scrolled-off head isn't dropped at the last write.
+        // This is the write that made the loss permanent: finalization advances
+        // the high-water mark, so a truncated finalize was unrepairable.
+        const merged = mergeStreamedText(lastGrowText, formatted);
+        const ok = await this.updateStreamMessage(req, growingTs, merged);
         // Fix 4: if the final chat.update fails, don't silently lose the final
         // delta — post it fresh, mirroring deliverReply's fallback.
-        if (!ok) await this.postReply(req, formatted);
+        if (!ok) await this.postReply(req, merged);
         deliveredProse = true;
         growingTs = undefined;
         growingIndex = -1;
+        lastGrowText = ""; // next block starts clean — never merge across blocks
       } else if (growingTs && growingIndex === -1) {
         // First delivered block reuses the placeholder (resolve in place via
         // deliver, which has the postMessage fallback if chat.update fails).
         await deliver(formatted);
         deliveredProse = true;
         growingTs = undefined; // placeholder now holds answer content
+        lastGrowText = ""; // this block is done — don't merge into the next one
       } else {
         await this.postFreshStreamMessage(req, formatted);
         deliveredProse = true;
@@ -1012,23 +1061,28 @@ export class WebtermRuntimeHandler {
       // write when the text actually changed and the floor has elapsed; the
       // finalize loop above and deliver() are NOT gated by this, so the last
       // delta of a block always lands regardless of the throttle.
-      const canGrowUpdate = text !== lastGrowText && Date.now() - lastGrowUpdateAt >= MIN_STATUS_UPDATE_MS;
+      // Merge against what Slack already shows BEFORE the throttle check: once
+      // the viewport slides, `text` is the block's tail, and comparing the raw
+      // tail to lastGrowText would both mis-trigger the throttle and, worse,
+      // write the shrunken text. `merged` is what the message should contain.
+      const merged = mergeStreamedText(lastGrowText, text);
+      const canGrowUpdate = merged !== lastGrowText && Date.now() - lastGrowUpdateAt >= MIN_STATUS_UPDATE_MS;
       if (growingIndex === trailingIdx) {
         // Already tracking this block. Update it if we have a ts and the
         // throttle allows; if the fresh post below previously failed (no ts,
         // e.g. a Slack outage) do NOT spam a new message every tick — leave
         // it to finalize via the finalize loop once it settles (Fix 3).
         if (growingTs && canGrowUpdate) {
-          if (await this.updateStreamMessage(req, growingTs, text)) deliveredProse = true;
-          lastGrowText = text;
+          if (await this.updateStreamMessage(req, growingTs, merged)) deliveredProse = true;
+          lastGrowText = merged;
           lastGrowUpdateAt = Date.now();
         }
       } else if (growingTs && growingIndex === -1) {
         // Bind the placeholder to this growing block.
         growingIndex = trailingIdx;
         if (canGrowUpdate) {
-          if (await this.updateStreamMessage(req, growingTs, text)) deliveredProse = true;
-          lastGrowText = text;
+          if (await this.updateStreamMessage(req, growingTs, merged)) deliveredProse = true;
+          lastGrowText = merged;
           lastGrowUpdateAt = Date.now();
         }
       } else {

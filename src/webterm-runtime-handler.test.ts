@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { WebtermRuntimeHandler, shellSingleQuote, decodeSlackEntities } from "./webterm-runtime-handler";
+import { WebtermRuntimeHandler, shellSingleQuote, decodeSlackEntities, mergeStreamedText } from "./webterm-runtime-handler";
 import { ThreadSessionStore } from "./thread-session-store";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1322,6 +1322,47 @@ describe("live-activity streaming (claw-1ta5)", () => {
     expect(slack.textOf("msg-1")).toContain("actually read");
   });
 
+  // claw-yem3 follow-up (2026-08-17): the OTHER scroll-off variant. claw-yem3
+  // stopped the fallback replacing the answer with a warning, but nothing stops
+  // the ordinary grow/finalize path from replacing it with SHORTER text.
+  //
+  // Reproduced live against real webterm before writing this test: the trailing
+  // block grew 274 -> 1247 chars, then the viewport scrolled and the SAME block
+  // extracted at 1129 (lost 118) while still yielding a non-zero segment — so
+  // fetchGridForRelay's early-return fired and scrollback was never consulted.
+  // updateStreamMessage then chat.update'd the message down to the shorter text
+  // in front of the user. Scrollback cannot rescue this: it returns empty for
+  // claude sessions (a plain shell session returns 163 lines), because claude's
+  // full-screen TUI renders in the alternate screen buffer, which has no
+  // scrollback.
+  //
+  // The rule: a streamed message may grow, never shrink.
+  it("never shrinks a streamed message when the block scrolls off the viewport", async () => {
+    const handlePromise = handler.handleMessage({ channelId: "C1", threadTs: "T1", text: "tell me", slack: slack.client });
+    await waitFor(() => mock.sessions.size === 1 && [...mock.sessions.values()][0].sseController !== null);
+    const id = mock.onlySessionId();
+    mock.emitPromptReady(id);
+    await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
+
+    const full = "PART-ONE alpha bravo charlie. PART-TWO delta echo foxtrot. PART-THREE golf hotel india.";
+    mock.setText(id, buildTurnGrid("tell me", full));
+    await waitFor(() => (slack.textOf("msg-1") ?? "").includes("PART-ONE"));
+    expect(slack.textOf("msg-1")).toContain("PART-THREE");
+
+    // The head scrolls out of the 40-row window: the block is still present and
+    // still extracts, but only its TAIL remains. This is the truncation window
+    // — non-zero segments, so no scrollback fallback.
+    const truncated = "PART-THREE golf hotel india.";
+    mock.setText(id, buildTurnGrid("tell me", truncated));
+    mock.emitPromptReady(id);
+    await handlePromise;
+
+    // The user must not watch content vanish from a message they were reading.
+    const finalText = slack.textOf("msg-1") ?? "";
+    expect(finalText).toContain("PART-ONE");
+    expect(finalText).toContain("PART-THREE");
+  });
+
   it("throttles the growing-block chat.update path to MIN_STATUS_UPDATE_MS (claw-uu2u A1)", async () => {
     // Large turnPollMs/statusPollMs so only emitOutputChunk drives the relay
     // loop — isolates the SSE-cadence wake path A1 targets (real webterm
@@ -2452,4 +2493,55 @@ describe("images out (claw-ynzo)", () => {
     expect(uploaded[0]).toEqual([realPng]);
     await handler.shutdown({ killSessions: true });
   }, 10_000);
+});
+
+describe("mergeStreamedText — a streamed message may grow, never shrink (claw-yem3 follow-up)", () => {
+  it("takes the new text on ordinary growth", () => {
+    expect(mergeStreamedText("Hello world", "Hello world and then some")).toBe("Hello world and then some");
+  });
+
+  it("seeds from empty", () => {
+    expect(mergeStreamedText("", "first chunk")).toBe("first chunk");
+  });
+
+  it("keeps what is displayed when the new extraction is a pure truncation", () => {
+    // The exact live failure: the viewport scrolled and re-extracted only the
+    // block's tail, with nothing new appended.
+    const displayed = "PART-ONE alpha bravo. PART-TWO charlie delta. PART-THREE echo foxtrot.";
+    expect(mergeStreamedText(displayed, "PART-THREE echo foxtrot.")).toBe(displayed);
+  });
+
+  it("stitches a slid window so the head is kept AND the new tail is gained", () => {
+    // Window slid: head scrolled off, but genuinely new content rendered below.
+    // Refusing the write would hold at the peak and lose the new tail; taking it
+    // raw would lose the head. Only stitching keeps both.
+    const displayed = "AAAA BBBB CCCC DDDD EEEE FFFF GGGG HHHH";
+    const next = "CCCC DDDD EEEE FFFF GGGG HHHH IIII JJJJ";
+    expect(mergeStreamedText(displayed, next)).toBe("AAAA BBBB CCCC DDDD EEEE FFFF GGGG HHHH IIII JJJJ");
+  });
+
+  it("never shrinks when no trustworthy overlap exists", () => {
+    const displayed = "a much longer body of text that is already in front of the user";
+    expect(mergeStreamedText(displayed, "tiny")).toBe(displayed);
+  });
+
+  it("prefers the longer text when there is no overlap but the new text carries more", () => {
+    const next = "a completely different and considerably longer body of rendered text";
+    expect(mergeStreamedText("short", next)).toBe(next);
+  });
+
+  it("ignores a coincidental short overlap rather than corrupting the message", () => {
+    // "the " is a plausible accidental match; stitching on it would splice two
+    // unrelated bodies together. Below MIN_STITCH_OVERLAP we must not stitch.
+    const displayed = "some rendered prose ending with the ";
+    const next = "the quick brown fox";
+    const out = mergeStreamedText(displayed, next);
+    expect(out).not.toBe("some rendered prose ending with the quick brown fox");
+    expect(out).toBe(displayed); // displayed is longer — never shrink
+  });
+
+  it("is idempotent — re-merging the same extraction changes nothing", () => {
+    const displayed = "stable body of text already delivered to slack";
+    expect(mergeStreamedText(displayed, displayed)).toBe(displayed);
+  });
 });
