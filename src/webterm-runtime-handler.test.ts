@@ -244,12 +244,22 @@ function buildBootGrid(): string {
   ].join("\n");
 }
 
+// Echo a multi-line input the way claude's TUI does — marker on row 1, indent
+// on continuation rows — so a fixture can't claim an echo the user never sent.
+// Echo matching verifies the WHOLE input (claw-e7sh), so a grid that renders
+// only the first line of a paste no longer reads as that turn's echo.
+function echoLines(userInput: string): string[] {
+  return userInput
+    .split("\n")
+    .map((l, i) => (l === "" ? "" : (i === 0 ? "❯ " : "  ") + l));
+}
+
 function buildTurnGrid(userInput: string, assistant: string): string {
   return [
     "claude --permission-mode auto",
     "[webterm:test] user@host claudeclaw %",
     "",
-    `❯ ${userInput}`,
+    ...echoLines(userInput),
     "",
     `⏺ ${assistant}`,
     "",
@@ -607,7 +617,7 @@ describe("WebtermRuntimeHandler", () => {
     await waitFor(() => mock.sessions.get(id)!.inputs.length >= 4);
     expect(mock.sessions.get(id)!.inputs[3]).toEqual({ kind: "keys", keys: ["Enter"] });
 
-    mock.setText(id, buildTurnGrid("line one", "got the snippet"));
+    mock.setText(id, buildTurnGrid(text, "got the snippet"));
     mock.emitPromptReady(id);
     await p;
     expect(slack.posted).toHaveLength(1);

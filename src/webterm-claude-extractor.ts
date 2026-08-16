@@ -126,14 +126,55 @@ function findLastUserEcho(
   for (let i = lines.length - 1; i >= 0; i--) {
     const trimmed = lines[i].trimEnd();
     if (trimmed === target.trimEnd() || trimmed === target) return i;
-    // Tolerate input wider than terminal — the first row matches the prefix.
-    if (lines[i].startsWith(target.slice(0, lines[i].length))) {
-      // Only accept this as a match if the line starts with the prompt marker
-      // (avoids false matches against content that happens to share a prefix).
-      if (lines[i].startsWith(promptMarker)) return i;
-    }
+    // Input wider than the terminal wraps onto continuation rows, so the first
+    // row can only ever match a PREFIX. That prefix alone is not proof of a
+    // match: two turns can share a long identical head — voice prompts (claw-vlvn)
+    // all begin with the same 139-char boilerplate line on a 120-col grid, so
+    // the entire first echo row is boilerplate carrying zero distinguishing
+    // content. The stale echo above would then win during the ~1s before the new
+    // one renders, and the previous turn's answer got relayed as this turn's
+    // first segment (claw-e7sh). Require the echo to account for the WHOLE input.
+    if (!lines[i].startsWith(promptMarker)) continue;
+    if (!lines[i].startsWith(target.slice(0, lines[i].length))) continue;
+    if (echoConsumesInput(lines, i, userText, promptMarker)) return i;
   }
   return -1;
+}
+
+// Does the echo starting at `start` account for all of `userText`?
+//
+// We consume userText with a cursor rather than reconstructing the original
+// spacing, because neither seam is faithfully recoverable from the grid:
+// word-wrap may break mid-token (long paths/URLs) so there is no space to
+// re-insert, and webterm right-trims rows so an indented blank row inside a
+// multi-paragraph echo arrives as "". Skipping whitespace in userText at each
+// row seam absorbs both cases while still catching real divergence — which is
+// the only thing that separates a stale same-prefix echo from this turn's.
+function echoConsumesInput(
+  lines: string[],
+  start: number,
+  userText: string,
+  promptMarker: string,
+): boolean {
+  const indent = " ".repeat(promptMarker.length);
+  let cursor = 0;
+  for (let i = start; i < lines.length; i++) {
+    if (i > start) {
+      // Same continuation rules as findEchoEnd: blank rows are paragraph
+      // separators, anything unindented or marker-led ends the echo.
+      if (lines[i].trimEnd() === "") continue;
+      if (!lines[i].startsWith(indent)) break;
+      if (lines[i].startsWith(DEFAULT_ASSISTANT_MARKER) || lines[i].startsWith(promptMarker)) break;
+    }
+    const text = (i === start ? lines[i].slice(promptMarker.length) : lines[i]).trim();
+    if (text === "") continue;
+    while (cursor < userText.length && /\s/.test(userText[cursor])) cursor++;
+    if (!userText.startsWith(text, cursor)) return false;
+    cursor += text.length;
+    if (cursor >= userText.length) return true;
+  }
+  while (cursor < userText.length && /\s/.test(userText[cursor])) cursor++;
+  return cursor >= userText.length;
 }
 
 // If the user input wrapped onto multiple grid rows, advance past the

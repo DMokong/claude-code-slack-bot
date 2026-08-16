@@ -966,3 +966,87 @@ describe("suffixed past-tense spinner (claw-prf6)", () => {
     expect(turn!.assistant).toContain("Done — running it in the background.");
   });
 });
+
+describe("stale same-prefix echo is not the current turn (claw-e7sh)", () => {
+  // Voice turns (claw-vlvn) prefix every prompt with an identical 139-char
+  // boilerplate line, which is WIDER than the 120-col grid. So the whole first
+  // echo row is boilerplate and carries zero distinguishing content: the old
+  // first-row-prefix match happily accepted the PREVIOUS voice turn's echo
+  // during the ~1s before the new one rendered, and relayed that turn's answer
+  // as segment 1 of this turn. Matching must consume the WHOLE echo, so a
+  // shared head is not enough to claim a match.
+  const BOILER =
+    "[Voice message — transcribed below. Your reply will also be read aloud: keep it conversational and speakable — no tables, minimal lists.]";
+  const voicePrompt = (spoken: string) => `${BOILER}\n\n${spoken}`;
+
+  // Render a user echo the way claude's TUI does: marker on row 1, indent on
+  // continuation rows, word-wrapped at `cols`, blank row per paragraph break.
+  function echoRows(text: string, cols = 120): string[] {
+    const rows: string[] = [];
+    for (const para of text.split("\n")) {
+      if (para === "") { rows.push(""); continue; }
+      let line = "";
+      for (const word of para.split(" ")) {
+        const cand = line ? `${line} ${word}` : word;
+        if (cand.length + 2 > cols) { rows.push(line); line = word; }
+        else line = cand;
+      }
+      if (line) rows.push(line);
+    }
+    return rows.map((r, i) => (r === "" ? "" : (i === 0 ? "❯ " : "  ") + r));
+  }
+
+  const FOOTER = ["", "─".repeat(120), "❯", "─".repeat(120), "   Opus 4.8 │ 7%/200k │ $0.47 │ ⏱ 15s"];
+  const PREV = voicePrompt("This is a test message trying out the Slack voice memo feature.");
+  const NEXT = voicePrompt("When does the spoken reply get triggered? Will it now trigger every single time?");
+
+  it("emits nothing while the new turn's echo has not rendered yet", () => {
+    const grid = [
+      ...echoRows(PREV),
+      "",
+      "⏺ Loud and clear, Dustin — the voice memo made it through the pipeline intact.",
+      "",
+      "✻ Cooked for 15s",
+      ...FOOTER,
+    ].join("\n");
+    // The only echo on the grid belongs to the PREVIOUS turn. Matching it would
+    // republish that turn's answer as this turn's first segment.
+    expect(extractSegments(grid, NEXT)).toEqual([]);
+  });
+
+  it("finds the new turn's echo once it renders, ignoring the stale one above", () => {
+    const grid = [
+      ...echoRows(PREV),
+      "",
+      "⏺ Loud and clear, Dustin — the voice memo made it through the pipeline intact.",
+      "",
+      ...echoRows(NEXT),
+      "",
+      "⏺ Checked the actual code — it's per message, not per thread.",
+      "",
+      "✻ Cooked for 57s",
+      ...FOOTER,
+    ].join("\n");
+    expect(extractSegments(grid, NEXT).map((s) => s.text)).toEqual([
+      "Checked the actual code — it's per message, not per thread.",
+    ]);
+  });
+
+  it("still matches an echo whose wrap splits a long unbroken token", () => {
+    // Regression guard for the fix itself: word-wrap can break mid-token (long
+    // paths/URLs), so echo verification must not assume a space at every seam.
+    const userText =
+      "[Attached files: /Users/dustincheng/projects/claudeclaw/local/slack-files/1786922053978-audio_clip_2026-08-17_09-13-44-141.m4a]\n\nwhat is this";
+    const grid = [
+      ...echoRows(userText),
+      "",
+      "⏺ That's the voice memo you just sent.",
+      "",
+      "✻ Cooked for 2s",
+      ...FOOTER,
+    ].join("\n");
+    expect(extractSegments(grid, userText).map((s) => s.text)).toEqual([
+      "That's the voice memo you just sent.",
+    ]);
+  });
+});
