@@ -16,6 +16,8 @@ import { setEngine, getThreadEntry } from './thread-state-manager';
 import { resolveEngine, EngineResolution } from './engine-router';
 import { CopilotHandler } from './copilot-handler';
 import { WebtermRuntimeHandler, stripTransportSuffix } from './webterm-runtime-handler';
+import { VoiceHandler } from './voice-handler';
+import * as fs from 'fs';
 
 /**
  * Maps Unicode emoji characters to Slack reaction shortcode names.
@@ -125,6 +127,7 @@ export class SlackHandler {
   private logger = new Logger('SlackHandler');
   private workingDirManager: WorkingDirectoryManager;
   private fileHandler: FileHandler;
+  private voiceHandler: VoiceHandler;
   private todoManager: TodoManager;
   private mcpManager: McpManager;
   private todoMessages: Map<string, string> = new Map(); // sessionKey -> messageTs
@@ -141,6 +144,7 @@ export class SlackHandler {
     this.mcpManager = mcpManager;
     this.workingDirManager = new WorkingDirectoryManager();
     this.fileHandler = new FileHandler();
+    this.voiceHandler = new VoiceHandler(config.voice);
     this.todoManager = new TodoManager();
     this.copilotHandler = new CopilotHandler();
     // Webterm-driven runtime — only instantiated if any channel is configured
@@ -211,11 +215,44 @@ export class SlackHandler {
       // claude the local paths inside the prompt — no more silent fallback to
       // the SDK path (which forked the thread's context).
       let webtermText = text ?? '';
+      let voiceTurn = false;
       if (files && files.length > 0) {
         const fileDir = process.env.WEBTERM_FILE_DIR || `${process.env.HOME}/projects/claudeclaw/local/slack-files`;
         const processed = await this.fileHandler.downloadAndProcessFiles(files, { targetDir: fileDir });
-        if (processed.length > 0) {
-          const listing = processed.map((f) => f.path).join(', ');
+        // Voice walkie-talkie lane: voice memos get transcribed locally and
+        // become the prompt; a failed transcription falls back to riding as a
+        // plain attachment so the message is never dropped.
+        const attachments: ProcessedFile[] = [];
+        const transcripts: string[] = [];
+        for (const f of processed) {
+          if (config.voice.enabled && this.voiceHandler.isVoiceFile(f)) {
+            const transcript = await this.voiceHandler.transcribe(f.path);
+            if (transcript) {
+              transcripts.push(transcript);
+              continue;
+            }
+          }
+          attachments.push(f);
+        }
+        if (transcripts.length > 0) {
+          voiceTurn = true;
+          const spoken = transcripts.join('\n');
+          // Early confirmation so a mis-transcription is visible immediately.
+          try {
+            await say({ text: `🎤 _"${spoken}"_`, thread_ts: thread_ts || ts });
+          } catch (error) {
+            this.logger.warn('Failed to post transcript confirmation', error);
+          }
+          webtermText = [
+            '[Voice message — transcribed below. Your reply will also be read aloud: keep it conversational and speakable — no tables, minimal lists.]',
+            spoken,
+            webtermText,
+          ]
+            .filter((s) => s.trim().length > 0)
+            .join('\n\n');
+        }
+        if (attachments.length > 0) {
+          const listing = attachments.map((f) => f.path).join(', ');
           webtermText = `[Attached files: ${listing}]\n\n${webtermText}`.trim();
         }
         if (processed.length < files.length) {
@@ -261,6 +298,26 @@ export class SlackHandler {
         uploadFiles: (paths: string[]) => this.getImageUploader().uploadImages(paths, channel, thread_ts || ts).then(() => {}),
         cwd: this.workingDirManager.getWorkingDirectory(channel, thread_ts, isDM ? user : undefined),
         slack: this.app.client,
+        // Voice-in → voice-out symmetry: only voice-initiated turns get a
+        // spoken reply. Synthesis + upload are best-effort; the m4a is temp
+        // and removed after Slack has its own copy.
+        ...(voiceTurn
+          ? {
+              voiceReply: async (finalText: string) => {
+                const audioPath = await this.voiceHandler.synthesize(finalText);
+                if (!audioPath) return;
+                try {
+                  await this.getImageUploader().uploadFile(audioPath, channel, thread_ts || ts, '🎧 spoken reply');
+                } finally {
+                  try {
+                    fs.unlinkSync(audioPath);
+                  } catch {
+                    /* already gone */
+                  }
+                }
+              },
+            }
+          : {}),
       });
       return;
     }

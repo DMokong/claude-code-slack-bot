@@ -65,6 +65,19 @@ export const config = {
     bufferSize: parseInt(process.env.SLACK_STREAM_BUFFER_SIZE || '128', 10),
   },
   channelFileRoutes: parseChannelFileRoutes(process.env.CHANNEL_FILE_ROUTES || '{}'),
+  // Voice walkie-talkie lane — local-only tools (whisper.cpp + macOS say),
+  // zero subscriptions by design. Voice memo in → transcript → session →
+  // text reply + spoken m4a back. VOICE_ENABLED=0 turns the lane off.
+  voice: {
+    enabled: process.env.VOICE_ENABLED !== '0' && process.env.VOICE_ENABLED !== 'false',
+    whisperBin: process.env.VOICE_WHISPER_BIN || 'whisper-cli',
+    whisperModel:
+      process.env.VOICE_WHISPER_MODEL || `${process.env.HOME}/.cache/whisper/ggml-small.en.bin`,
+    ffmpegBin: process.env.VOICE_FFMPEG_BIN || 'ffmpeg',
+    ttsVoice: process.env.VOICE_TTS_VOICE || 'Samantha',
+    ttsRate: parseInt(process.env.VOICE_TTS_RATE || '185', 10),
+    maxSpeechChars: parseInt(process.env.VOICE_MAX_SPEECH_CHARS || '6000', 10),
+  },
   channelNames: loadChannelMap(process.env.CHANNEL_MAP_PATH),
   baseDirectory: process.env.BASE_DIRECTORY || '',
   defaultWorkingDirectory: process.env.DEFAULT_WORKING_DIRECTORY || '',

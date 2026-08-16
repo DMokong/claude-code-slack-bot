@@ -55,8 +55,18 @@ export class ImageUploader {
   }
 
   async uploadImage(filePath: string, channelId: string, threadTs: string): Promise<boolean> {
+    return this.uploadFile(filePath, channelId, threadTs, `🖼️ ${path.basename(filePath)}`);
+  }
+
+  /** Generic thread upload — also carries voice-reply m4a files (voice lane). */
+  async uploadFile(
+    filePath: string,
+    channelId: string,
+    threadTs: string,
+    initialComment?: string,
+  ): Promise<boolean> {
     if (!fs.existsSync(filePath)) {
-      this.logger.warn('Image file not found, skipping upload', { filePath });
+      this.logger.warn('File not found, skipping upload', { filePath });
       return false;
     }
 
@@ -69,13 +79,13 @@ export class ImageUploader {
         thread_ts: threadTs,
         file: fileBuffer,
         filename,
-        initial_comment: `🖼️ ${filename}`,
+        initial_comment: initialComment ?? filename,
       });
 
-      this.logger.info('Uploaded image to Slack', { filePath, channelId });
+      this.logger.info('Uploaded file to Slack', { filePath, channelId });
       return true;
     } catch (error) {
-      this.logger.error('Failed to upload image to Slack', { filePath, error });
+      this.logger.error('Failed to upload file to Slack', { filePath, error });
       return false;
     }
   }

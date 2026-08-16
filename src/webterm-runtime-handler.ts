@@ -247,6 +247,11 @@ export interface HandleMessageOpts {
   // Upload produced files back into the thread (claw-ynzo), pre-bound by the
   // slack-handler to the image uploader.
   uploadFiles?: (paths: string[]) => Promise<void>;
+  // Voice walkie-talkie lane: set when the turn was voice-initiated. Called
+  // once at turn end with the full extracted answer so the slack-handler can
+  // synthesize and upload a spoken reply. Best-effort — failures never affect
+  // the text delivery that already happened.
+  voiceReply?: (finalText: string) => Promise<void>;
   // Per-thread working directory (from WorkingDirectoryManager); falls back
   // to the handler-level default cwd.
   cwd?: string;
@@ -639,6 +644,20 @@ export class WebtermRuntimeHandler {
         const recap = timeline.recap(Date.now() - turnStartedAt, costDelta);
         if (recap) await this.postReply(req, `_${recap}_`);
         await this.uploadProducedFiles(req, grid, turnStartedAt);
+        // Voice walkie-talkie lane: re-extract the WHOLE turn (segments may
+        // have streamed piecemeal) and hand it to the slack-handler's TTS
+        // callback. Best-effort — the text answer is already delivered.
+        if (req.voiceReply) {
+          try {
+            const voiceTurn = extractTurn(grid, req.text);
+            const voiceText = voiceTurn ? formatForSlack(formatTurnForSlack(voiceTurn)) : "";
+            if (voiceText) await req.voiceReply(voiceText);
+          } catch (err) {
+            this.logger.warn("voice reply failed (best-effort)", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
         await this.runTripwire(session, req, postedSegments);
         return;
       }
