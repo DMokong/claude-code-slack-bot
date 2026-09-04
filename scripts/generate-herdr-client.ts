@@ -16,7 +16,18 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const REQUEST_METHODS = ["ping", "pane.list", "pane.get", "pane.read", "events.subscribe"] as const;
+// agent.start (boot) and pane.send_keys (abort/keystrokes) added for trk-s5d.3
+// (the turn-loop port): boot needs agent.start's ready-or-agent_not_ready
+// contract, and abort needs a way to deliver Escape/Ctrl-C to the pane.
+const REQUEST_METHODS = [
+	"ping",
+	"pane.list",
+	"pane.get",
+	"pane.read",
+	"events.subscribe",
+	"agent.start",
+	"pane.send_keys",
+] as const;
 
 // The schema has no declared mapping from request method -> response "type"
 // tag; it's a naming convention in the server, not a schema relationship.
@@ -27,6 +38,8 @@ const RESULT_TYPE_BY_METHOD: Record<(typeof REQUEST_METHODS)[number], string> = 
 	"pane.get": "pane_info",
 	"pane.read": "pane_read",
 	"events.subscribe": "subscription_started",
+	"agent.start": "agent_started",
+	"pane.send_keys": "ok",
 };
 
 // pane_output_changed itself is NOT a subscribable Subscription variant (see

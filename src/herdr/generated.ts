@@ -106,6 +106,19 @@ export namespace HerdrRequest {
 	export type EventsSubscribeParams = {
 		subscriptions: Array<Subscription>;
 	};
+
+	export type AgentStartParams = {
+		args?: Array<string>;
+		kind: string;
+		name: string;
+		pane_id: string;
+		timeout_ms?: number | null;
+	};
+
+	export type PaneSendKeysParams = {
+		keys: Array<string>;
+		pane_id: string;
+	};
 }
 
 export namespace HerdrResponse {
@@ -193,6 +206,41 @@ export namespace HerdrResponse {
 	export type EventsSubscribeResponse = {
 		type: "subscription_started";
 	};
+
+	export type AgentInfo = {
+		agent?: string | null;
+		agent_session?: AgentSessionInfo | null;
+		agent_status: AgentStatus;
+		cwd?: string | null;
+		display_agent?: string | null;
+		focused: boolean;
+		foreground_cwd?: string | null;
+		interactive_ready?: boolean;
+		launch_pending?: boolean;
+		name?: string | null;
+		pane_id: string;
+		revision: number;
+		screen_detection_skipped?: boolean;
+		state_change_seq?: number;
+		state_labels?: Record<string, string>;
+		tab_id: string;
+		terminal_id: string;
+		terminal_title?: string | null;
+		terminal_title_stripped?: string | null;
+		title?: string | null;
+		tokens?: Record<string, string>;
+		workspace_id: string;
+	};
+
+	export type AgentStartResponse = {
+		agent: AgentInfo;
+		argv: Array<string>;
+		type: "agent_started";
+	};
+
+	export type PaneSendKeysResponse = {
+		type: "ok";
+	};
 }
 
 export interface HerdrRequestMap {
@@ -201,6 +249,8 @@ export interface HerdrRequestMap {
 	"pane.get": { params: HerdrRequest.PaneTarget; result: HerdrResponse.PaneGetResponse };
 	"pane.read": { params: HerdrRequest.PaneReadParams; result: HerdrResponse.PaneReadResponse };
 	"events.subscribe": { params: HerdrRequest.EventsSubscribeParams; result: HerdrResponse.EventsSubscribeResponse };
+	"agent.start": { params: HerdrRequest.AgentStartParams; result: HerdrResponse.AgentStartResponse };
+	"pane.send_keys": { params: HerdrRequest.PaneSendKeysParams; result: HerdrResponse.PaneSendKeysResponse };
 }
 
 export type HerdrMethod = keyof HerdrRequestMap;
