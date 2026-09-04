@@ -14,8 +14,10 @@ import {
   isRelayIdle,
   isWedged,
   readPane,
+  sendInput,
   sendKeys,
 } from "./herdr-turn-loop";
+import { extractTurn } from "./webterm-claude-extractor";
 
 // A real unix-domain-socket server standing in for herdr (mirrors
 // src/herdr/client.test.ts's MockHerdrServer): one request per connection,
@@ -258,6 +260,66 @@ describe("PaneRelay (RELAY wake, trk-s5d.3 — push-based per trk-s5d.1 finding)
       data: { type: "pane_updated", pane: { pane_id: "pane-OTHER", agent_status: "working", focused: true, revision: 2, tab_id: "t1", terminal_id: "term1", workspace_id: "w1" } },
     });
     await expect(waiter).resolves.toBe("timeout");
+    relay.close();
+  });
+});
+
+describe("composed turn loop (BOOT → RELAY → IDLE FLOOR, trk-s5d.3)", () => {
+  it("boots, sends input, wakes on the push, and only extracts once the idle floor clears — through the UNCHANGED extractor", async () => {
+    let paneRevision = 1;
+    let paneText = "claude --permission-mode auto\n\n❯";
+    mockServer.onRequest = (id, method, params, socket) => {
+      if (method === "agent.start") {
+        mockServer.reply(socket, id, {
+          type: "agent_started",
+          argv: ["claude"],
+          agent: { pane_id: "pane-1", agent_status: "idle", focused: true, revision: paneRevision, tab_id: "t1", terminal_id: "term1", workspace_id: "w1" },
+        });
+      } else if (method === "pane.send_input") {
+        expect(params).toEqual({ pane_id: "pane-1", text: "hello", keys: ["Enter"] });
+        // The pane "renders" the answer once input lands.
+        paneRevision = 5;
+        paneText = buildTurnGrid("the answer");
+        mockServer.reply(socket, id, { type: "ok" });
+      } else if (method === "pane.read") {
+        mockServer.reply(socket, id, {
+          type: "pane_read",
+          read: { text: paneText, revision: paneRevision, format: "text", pane_id: "pane-1", source: "visible", tab_id: "t1", truncated: false, workspace_id: "w1" },
+        });
+      } else if (method === "events.subscribe") {
+        mockServer.reply(socket, id, { type: "subscription_started" });
+      }
+    };
+
+    const client = new HerdrClient({ socketPath: mockServer.socketPath });
+    const relay = new PaneRelay({ socketPath: mockServer.socketPath });
+    const clock = new RevisionClock();
+
+    await bootAgent(client, { name: "slack-bot", paneId: "pane-1" });
+    await sendInput(client, "pane-1", "hello");
+
+    const waiter = relay.waitForChange("pane-1", 2000);
+    await new Promise((r) => setTimeout(r, 20));
+    mockServer.push({
+      event: "pane_updated",
+      data: { type: "pane_updated", pane: { pane_id: "pane-1", agent_status: "working", focused: true, revision: paneRevision, tab_id: "t1", terminal_id: "term1", workspace_id: "w1" } },
+    });
+    expect(await waiter).toBe("pushed");
+
+    // First read: the answer just landed (revision just bumped) — the
+    // extractor already finds the full turn, but the idle floor must still
+    // hold it back (claw-3btg.4: an idle-looking frame fetched mid-paint).
+    let read = await readPane(client, "pane-1");
+    let turn = extractTurn(read.text, "hello");
+    expect(turn?.assistant).toContain("the answer");
+    expect(isRelayIdle(read.text, read.revision, clock, { idleOutputFloorMs: 250 }, 0)).toBe(false);
+
+    // Re-read later, same revision (no further output) — now past the floor.
+    read = await readPane(client, "pane-1");
+    turn = extractTurn(read.text, "hello");
+    expect(isRelayIdle(read.text, read.revision, clock, { idleOutputFloorMs: 250 }, 300)).toBe(true);
+    expect(turn?.assistant).toContain("the answer");
+
     relay.close();
   });
 });

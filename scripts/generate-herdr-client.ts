@@ -16,9 +16,11 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-// agent.start (boot) and pane.send_keys (abort/keystrokes) added for trk-s5d.3
-// (the turn-loop port): boot needs agent.start's ready-or-agent_not_ready
-// contract, and abort needs a way to deliver Escape/Ctrl-C to the pane.
+// agent.start (boot), pane.send_keys (abort/keystrokes), and pane.send_input
+// (relay: typing the user's message + submit key in one call) added for
+// trk-s5d.3 (the turn-loop port): boot needs agent.start's
+// ready-or-agent_not_ready contract, abort needs a way to deliver
+// Escape/Ctrl-C to the pane, and relay needs a way to drive a turn at all.
 const REQUEST_METHODS = [
 	"ping",
 	"pane.list",
@@ -27,6 +29,7 @@ const REQUEST_METHODS = [
 	"events.subscribe",
 	"agent.start",
 	"pane.send_keys",
+	"pane.send_input",
 ] as const;
 
 // The schema has no declared mapping from request method -> response "type"
@@ -40,6 +43,7 @@ const RESULT_TYPE_BY_METHOD: Record<(typeof REQUEST_METHODS)[number], string> = 
 	"events.subscribe": "subscription_started",
 	"agent.start": "agent_started",
 	"pane.send_keys": "ok",
+	"pane.send_input": "ok",
 };
 
 // pane_output_changed itself is NOT a subscribable Subscription variant (see

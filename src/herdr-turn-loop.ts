@@ -90,6 +90,19 @@ export async function sendKeys(client: HerdrClient, paneId: string, keys: string
   await client.call("pane.send_keys", { pane_id: paneId, keys });
 }
 
+// Types the user's message and submits it via herdr's pane.send_input, which
+// takes text and keys in one call. UNVERIFIED: webterm needed
+// DEFAULT_PASTE_SETTLE_MS between the text write and the Enter keystroke
+// because claude's TUI aggregates input arriving right after a bracketed
+// paste into the paste itself, swallowing an immediate Enter — whether
+// pane.send_input's single call already accounts for that (vs. writing text
+// then keys back-to-back with no settle) has not been confirmed against a
+// live herdr instance. Re-test before relying on this against real claude
+// panes; if the race reproduces, this needs a settleMs param like webterm's.
+export async function sendInput(client: HerdrClient, paneId: string, text: string, keys: string[] = ["Enter"]): Promise<void> {
+  await client.call("pane.send_input", { pane_id: paneId, text, keys });
+}
+
 export type AbortMode = "esc" | "ctrl+c";
 
 // "stop" from Slack (mirrors WebtermRuntimeHandler.abortTurn): interrupt

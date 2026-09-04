@@ -119,6 +119,12 @@ export namespace HerdrRequest {
 		keys: Array<string>;
 		pane_id: string;
 	};
+
+	export type PaneSendInputParams = {
+		keys?: Array<string>;
+		pane_id: string;
+		text?: string;
+	};
 }
 
 export namespace HerdrResponse {
@@ -241,6 +247,10 @@ export namespace HerdrResponse {
 	export type PaneSendKeysResponse = {
 		type: "ok";
 	};
+
+	export type PaneSendInputResponse = {
+		type: "ok";
+	};
 }
 
 export interface HerdrRequestMap {
@@ -251,6 +261,7 @@ export interface HerdrRequestMap {
 	"events.subscribe": { params: HerdrRequest.EventsSubscribeParams; result: HerdrResponse.EventsSubscribeResponse };
 	"agent.start": { params: HerdrRequest.AgentStartParams; result: HerdrResponse.AgentStartResponse };
 	"pane.send_keys": { params: HerdrRequest.PaneSendKeysParams; result: HerdrResponse.PaneSendKeysResponse };
+	"pane.send_input": { params: HerdrRequest.PaneSendInputParams; result: HerdrResponse.PaneSendInputResponse };
 }
 
 export type HerdrMethod = keyof HerdrRequestMap;
