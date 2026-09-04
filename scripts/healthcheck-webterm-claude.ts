@@ -1,57 +1,58 @@
 #!/usr/bin/env -S npx tsx
-// End-to-end healthcheck for the webterm-driven claude runtime path.
+// End-to-end healthcheck for the herdr-driven claude runtime path.
 //
-// Exercises the same chain the bot uses for routed channels:
-//   1. webterm API reachable
-//   2. (optional) webterm UI reachable
-//   3. create webterm session
-//   4. subscribe to SSE with promptReady=true
-//   5. boot `claude` in the configured cwd
-//   6. send a known-answer turn ("what is 2 plus 2?") — bracketed paste +
-//      settle delay, mirroring the production handler's input path
-//   7. fetch grid + extract assistant turn via the PRODUCTION extractor,
-//      retrying on empty extraction like the bot does (claw-etj7 compensation)
-//   8. format for Slack
-//   9. assert the extracted text contains the expected answer marker
-//  cleanup. kill session.
+// Exercises the chain the bot uses for routed channels:
+//   1. herdr binary reachable
+//   2. spin up a throwaway synthetic-PTY-held herdr session (146x201 PTY,
+//      pinning the pane at webterm's old 120x200 geometry — see
+//      docs/runbooks/herdr-pty-holder.md in claudeclaw)
+//   3. resolve the session's pane id
+//   4. boot `claude` in the configured cwd, poll until its status bar renders
+//   5. send a known-answer turn ("what is 2 plus 2?") — send-text + settle
+//      delay + Enter, mirroring the bracketed-paste settle the old webterm
+//      handler used
+//   6. poll `pane read --source visible` and feed it straight into the
+//      PRODUCTION extractor (extractTurn) until two consecutive polls agree,
+//      the same render-settle guard the webterm path used (claw-etj7)
+//   7. format for Slack
+//   8. assert the extracted text contains the expected answer marker
+//  cleanup: stop/delete the throwaway session, kill the PTY-holder.
 //
 // Run from the slack-bot repo root:
 //   npx tsx scripts/healthcheck-webterm-claude.ts
-//   npx tsx scripts/healthcheck-webterm-claude.ts --ui          # also probe Vite UI
-//   WEBTERM_URL=http://other:7681 npx tsx scripts/healthcheck-webterm-claude.ts
+//   HERDR_HEALTHCHECK_CWD=/other/dir npx tsx scripts/healthcheck-webterm-claude.ts
 //
 // Exit 0 = healthy, 1 = any step failed.
 
 import { extractTurn, formatTurnForSlack } from "../src/webterm-claude-extractor";
-import { existsSync, readFileSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-// The webterm API requires a bearer token (claw-yv02); read it the same way the
-// bot does (env, else the shared token file).
-function resolveToken(): string {
-  const env = process.env.WEBTERM_TOKEN?.trim();
-  if (env) return env;
-  try {
-    const f = process.env.WEBTERM_TOKEN_FILE ?? join(homedir(), ".webterm", "token");
-    return existsSync(f) ? readFileSync(f, "utf8").trim() : "";
-  } catch { return ""; }
-}
-const TOKEN = resolveToken();
-const authHeaders: Record<string, string> = TOKEN ? { authorization: `Bearer ${TOKEN}` } : {};
+const HERDR_BIN = process.env.HERDR_BIN ?? "herdr";
+// A throwaway named session, distinct from any production session (e.g. the
+// bot's own "slack-bot" session held by com.claudeclaw.herdr-pty) — never
+// point this at a session name that's already in production use.
+const HERDR_SESSION = process.env.HERDR_HEALTHCHECK_SESSION ?? "webterm-claude-healthcheck";
+// pane = (pty_cols - 26) x (pty_rows - 1) — measured, see
+// docs/runbooks/herdr-pty-holder.md. 146x201 -> 120x200, webterm's old size.
+const HERDR_PTY_COLS = Number(process.env.HERDR_PTY_COLS ?? 146);
+const HERDR_PTY_ROWS = Number(process.env.HERDR_PTY_ROWS ?? 201);
+const HERDR_PTY_HOLDER_PATH =
+  process.env.HERDR_PTY_HOLDER_PATH ?? join(homedir(), "projects", "claudeclaw", "scripts", "herdr-pty-holder.py");
+const HERDR_PTY_READY_TIMEOUT_MS = Number(process.env.HERDR_PTY_READY_TIMEOUT_MS ?? 15_000);
 
-const WEBTERM_URL = process.env.WEBTERM_URL ?? "http://127.0.0.1:7681";
-const WEBTERM_UI_URL = process.env.WEBTERM_UI_URL ?? "http://127.0.0.1:5173";
-const CWD = process.env.WEBTERM_CWD ?? `${process.env.HOME}/projects/claudeclaw`;
-const CLAUDE_CMD = process.env.WEBTERM_CLAUDE_CMD ?? "claude --dangerously-skip-permissions";
-const COLS = Number(process.env.WEBTERM_COLS ?? 120);
-const ROWS = Number(process.env.WEBTERM_ROWS ?? 40);
+const CWD = process.env.HERDR_HEALTHCHECK_CWD ?? `${process.env.HOME}/projects/claudeclaw`;
+const CLAUDE_CMD = process.env.HERDR_HEALTHCHECK_CLAUDE_CMD ?? "claude --dangerously-skip-permissions";
 const BOOT_TIMEOUT_MS = Number(process.env.BOOT_TIMEOUT_MS ?? 30_000);
 const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS ?? 90_000);
 const HEALTHCHECK_PROMPT = process.env.HEALTHCHECK_PROMPT ?? "what is 2 plus 2? answer in one short sentence.";
 const HEALTHCHECK_EXPECT = process.env.HEALTHCHECK_EXPECT ?? "4";
 
-const includeUiCheck = process.argv.includes("--ui") || process.env.HEALTHCHECK_UI === "1";
+// Mirrors the extractor's own model-status-row anchor (src/webterm-claude-extractor.ts)
+// closely enough to recognize "claude's TUI has rendered its status bar" without
+// importing extractor internals — the extractor module itself stays untouched.
+const MODEL_STATUS_ROW = /^\s*(Opus|Fable|Sonnet|Haiku|Mythos)\s+\d/m;
 
 // ----- terminal output helpers -----
 
@@ -76,11 +77,10 @@ interface StepResult {
 const results: StepResult[] = [];
 const overallStart = Date.now();
 let stepIndex = 0;
-const totalSteps = includeUiCheck ? 10 : 9;
+const totalSteps = 8;
 // Mirror the production handler: wait out claude's paste-aggregation window
 // before Enter, or the submit keystroke is swallowed into the paste.
 const PASTE_SETTLE_MS = 1_000;
-const ETJ7_MAX_ATTEMPTS = 3;
 
 async function step<T>(name: string, fn: () => Promise<T>, hint?: string): Promise<T> {
   stepIndex++;
@@ -108,166 +108,232 @@ function infoLine(text: string) {
   process.stderr.write(`        ${c.dim(text)}\n`);
 }
 
-// ----- webterm API -----
-
-async function createSession(): Promise<{ id: string; cols: number; rows: number }> {
-  const res = await fetch(`${WEBTERM_URL}/api/sessions`, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...authHeaders },
-    body: JSON.stringify({ title: "healthcheck", cols: COLS, rows: ROWS, cwd: CWD }),
-  });
-  if (!res.ok) throw new Error(`POST /api/sessions returned ${res.status}: ${await res.text()}`);
-  return await res.json();
-}
-
-async function killSession(id: string): Promise<void> {
-  await fetch(`${WEBTERM_URL}/api/sessions/${id}`, { method: "DELETE", headers: { ...authHeaders } });
-}
-
-async function sendInput(
-  id: string,
-  text: string,
-  opts: { kind?: "text" | "paste"; settleMs?: number } = {},
-): Promise<void> {
-  const base = `${WEBTERM_URL}/api/sessions/${id}/input`;
-  const a = await fetch(base, { method: "POST", headers: { "content-type": "application/json", ...authHeaders }, body: JSON.stringify({ kind: opts.kind ?? "text", data: text }) });
-  if (!a.ok && a.status !== 204) throw new Error(`POST /input text returned ${a.status}`);
-  if (opts.settleMs) await sleep(opts.settleMs);
-  const b = await fetch(base, { method: "POST", headers: { "content-type": "application/json", ...authHeaders }, body: JSON.stringify({ kind: "keys", keys: ["Enter"] }) });
-  if (!b.ok && b.status !== 204) throw new Error(`POST /input enter returned ${b.status}`);
-}
-
-async function fetchGridText(id: string): Promise<string> {
-  const res = await fetch(`${WEBTERM_URL}/api/sessions/${id}/text`, { headers: { ...authHeaders } });
-  if (!res.ok) throw new Error(`GET /text returned ${res.status}`);
-  return await res.text();
-}
-
-// ----- SSE prompt-ready listener -----
-
-interface SseHandle {
-  promptReadyCount: number;
-  alive: boolean;
-  abort: AbortController;
-  done: Promise<void>;
-}
-
-async function subscribeSse(id: string): Promise<SseHandle> {
-  const url =
-    `${WEBTERM_URL}/api/sessions/${id}/events` +
-    `?idleMs=1500&promptReady=true&promptReadyPollMs=400&promptReadyStablePolls=3`;
-  const abort = new AbortController();
-  const res = await fetch(url, { headers: { accept: "text/event-stream", ...authHeaders }, signal: abort.signal });
-  if (!res.ok || !res.body) throw new Error(`GET /events returned ${res.status}`);
-  const handle: SseHandle = {
-    promptReadyCount: 0,
-    alive: true,
-    abort,
-    done: Promise.resolve(),
-  };
-  handle.done = (async () => {
-    const decoder = new TextDecoder();
-    let buf = "";
-    try {
-      for await (const chunk of res.body as any) {
-        if (abort.signal.aborted) break;
-        buf += decoder.decode(chunk as Uint8Array, { stream: true });
-        let idx;
-        while ((idx = buf.indexOf("\n\n")) !== -1) {
-          const record = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          let event = "";
-          for (const line of record.split("\n")) {
-            if (line.startsWith("event:")) event = line.slice(6).trim();
-          }
-          if (event === "prompt-ready") handle.promptReadyCount++;
-          else if (event === "exit") handle.alive = false;
-        }
-      }
-    } catch {
-      // signal abort or stream end — caller handles via .alive
-    }
-  })();
-  return handle;
-}
-
-async function waitForPromptReady(sse: SseHandle, target: number, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!sse.alive) throw new Error("session exited before reaching prompt-ready");
-    if (sse.promptReadyCount >= target) return;
-    await sleep(50);
-  }
-  throw new Error(`prompt-ready ${target} not seen within ${timeoutMs}ms (saw ${sse.promptReadyCount})`);
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// ----- herdr CLI transport -----
+//
+// Every invocation is explicitly scoped with --session <HERDR_SESSION>. Never
+// call the herdr CLI without an explicit --session here: an unscoped call
+// falls back to whatever session is ambient (e.g. a live interactive one) and
+// can silently attach an ephemeral client that resizes its pane (see
+// docs/runbooks/herdr-pty-holder.md, "Decision 2").
+
+function spawnHerdr(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(HERDR_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve({ stdout, stderr });
+      else reject(new Error(`herdr ${args.join(" ")} exited ${code}: ${(stderr || stdout).trim()}`));
+    });
+  });
+}
+
+// Pane/layout/current subcommands are scoped to a session via the global
+// --session flag.
+function runHerdr(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return spawnHerdr(["--session", HERDR_SESSION, ...args]);
+}
+
+// `session stop`/`session delete` are meta-commands issued against the
+// ambient connection with the target session name as a POSITIONAL argument —
+// they do NOT take the global --session flag (that flag would mean "scope
+// this call to a socket that's about to stop existing", which is not what
+// these commands are for).
+function runHerdrSessionCmd(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return spawnHerdr(args);
+}
+
+async function herdrJson<T>(args: string[]): Promise<T> {
+  const { stdout } = await runHerdr(args);
+  return JSON.parse(stdout).result as T;
+}
+
+// ----- synthetic-PTY session bootstrap -----
+// Reuses the pattern from claudeclaw's scripts/herdr-pty-holder.py: a client
+// attached under a synthetic 146x201 PTY pins the session's pane at 120x200,
+// webterm's old geometry. See docs/runbooks/herdr-pty-holder.md.
+
+let ptyHolder: ChildProcess | null = null;
+
+async function startThrowawaySession(): Promise<void> {
+  // Defensive: a prior crashed run may have left this throwaway session
+  // behind. Clear it before claiming the name again.
+  await runHerdrSessionCmd(["session", "stop", HERDR_SESSION]).catch(() => {});
+  await runHerdrSessionCmd(["session", "delete", HERDR_SESSION]).catch(() => {});
+
+  ptyHolder = spawn(
+    "python3",
+    [HERDR_PTY_HOLDER_PATH, "--session", HERDR_SESSION, "--cols", String(HERDR_PTY_COLS), "--rows", String(HERDR_PTY_ROWS)],
+    { cwd: CWD, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  ptyHolder.on("error", () => {}); // surfaced via the geometry-poll timeout below
+
+  const expectedWidth = HERDR_PTY_COLS - 26;
+  const expectedHeight = HERDR_PTY_ROWS - 1;
+  const deadline = Date.now() + HERDR_PTY_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const layout = await herdrJson<{ layout: { area: { width: number; height: number } } }>([
+        "pane",
+        "layout",
+        "--current",
+      ]);
+      if (layout.layout.area.width === expectedWidth && layout.layout.area.height === expectedHeight) return;
+    } catch {
+      // session/pane not attached yet — keep polling
+    }
+    await sleep(300);
+  }
+  throw new Error(
+    `herdr session ${HERDR_SESSION} never resolved its pane to ${expectedWidth}x${expectedHeight} within ${HERDR_PTY_READY_TIMEOUT_MS}ms`,
+  );
+}
+
+async function getPaneId(): Promise<string> {
+  const current = await herdrJson<{ pane: { pane_id: string } }>(["pane", "current", "--current"]);
+  return current.pane.pane_id;
+}
+
+async function killThrowawaySession(): Promise<void> {
+  await runHerdrSessionCmd(["session", "stop", HERDR_SESSION]).catch(() => {});
+  if (ptyHolder && ptyHolder.exitCode === null && !ptyHolder.killed) {
+    ptyHolder.kill("SIGTERM");
+  }
+  // "delete" requires the session to have actually finished transitioning to
+  // stopped server-side — "stop" returning doesn't guarantee that happened
+  // yet, so retry rather than racing the state change (observed: a bare
+  // stop-then-delete left the session behind, still "running").
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      await runHerdrSessionCmd(["session", "delete", HERDR_SESSION]);
+      return;
+    } catch {
+      await sleep(300);
+    }
+  }
+  throw new Error(`session ${HERDR_SESSION} stopped but never reached a deletable state`);
+}
+
+// ----- pane I/O -----
+
+async function sendInput(paneId: string, text: string, opts: { settleMs?: number } = {}): Promise<void> {
+  await runHerdr(["pane", "send-text", paneId, text]);
+  if (opts.settleMs) await sleep(opts.settleMs);
+  await runHerdr(["pane", "send-keys", paneId, "enter"]);
+}
+
+async function fetchGridText(paneId: string): Promise<string> {
+  const { stdout } = await runHerdr(["pane", "read", paneId, "--source", "visible"]);
+  return stdout;
+}
+
+// ----- readiness polling -----
+// herdr has no push-based "prompt ready" event on the CLI transport this
+// script uses, so both boot and turn completion are plain poll loops.
+
+async function waitForBootReady(paneId: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let sawStatusRow = false;
+  while (Date.now() < deadline) {
+    const grid = await fetchGridText(paneId);
+    if (MODEL_STATUS_ROW.test(grid)) {
+      if (sawStatusRow) return; // seen on two consecutive polls — rendered, not mid-paint
+      sawStatusRow = true;
+    } else {
+      sawStatusRow = false;
+    }
+    await sleep(750);
+  }
+  throw new Error(`claude did not reach a ready state (status bar never rendered) within ${timeoutMs}ms`);
+}
+
+async function waitForTurnAndExtract(
+  paneId: string,
+  prompt: string,
+  timeoutMs: number,
+): Promise<ReturnType<typeof extractTurn>> {
+  const deadline = Date.now() + timeoutMs;
+  let last: ReturnType<typeof extractTurn> = null;
+  let pollCount = 0;
+  while (Date.now() < deadline) {
+    pollCount++;
+    const grid = await fetchGridText(paneId);
+    const t = extractTurn(grid, prompt);
+    if (t !== null && t.assistant.trim().length > 0) {
+      if (last && last.assistant === t.assistant) {
+        infoLine(`stable extraction after ${pollCount} polls`);
+        return t;
+      }
+      last = t;
+    } else {
+      last = null;
+    }
+    await sleep(1_500);
+  }
+  throw new Error(
+    `extractor returned no stable assistant text after ${timeoutMs}ms (${pollCount} polls) — ` +
+      `claude never rendered a ⏺ block, or the TUI format drifted (gotcha #8: diff /text against test/fixtures/webterm-grids/)`,
+  );
 }
 
 // ----- main -----
 
 async function main(): Promise<number> {
-  process.stderr.write(c.bold("ClaudeClaw webterm-claude healthcheck\n"));
-  process.stderr.write(c.dim(`webterm api    = ${WEBTERM_URL}\n`));
-  if (includeUiCheck) process.stderr.write(c.dim(`webterm ui     = ${WEBTERM_UI_URL}\n`));
-  process.stderr.write(c.dim(`cwd            = ${CWD}\n`));
-  process.stderr.write(c.dim(`claude command = ${CLAUDE_CMD}\n`));
-  process.stderr.write(c.dim(`prompt         = ${JSON.stringify(HEALTHCHECK_PROMPT)}\n`));
+  process.stderr.write(c.bold("ClaudeClaw webterm-claude healthcheck (herdr transport)\n"));
+  process.stderr.write(c.dim(`herdr session   = ${HERDR_SESSION}\n`));
+  process.stderr.write(c.dim(`pty geometry    = ${HERDR_PTY_COLS}x${HERDR_PTY_ROWS} (pane target ${HERDR_PTY_COLS - 26}x${HERDR_PTY_ROWS - 1})\n`));
+  process.stderr.write(c.dim(`cwd             = ${CWD}\n`));
+  process.stderr.write(c.dim(`claude command  = ${CLAUDE_CMD}\n`));
+  process.stderr.write(c.dim(`prompt          = ${JSON.stringify(HEALTHCHECK_PROMPT)}\n`));
   process.stderr.write(c.dim(`expect contains = ${JSON.stringify(HEALTHCHECK_EXPECT)}\n`));
   process.stderr.write("\n");
 
-  let sessionId: string | null = null;
-  let sse: SseHandle | null = null;
+  let sessionStarted = false;
   let exitCode = 0;
 
   try {
     await step(
-      `webterm API reachable at ${WEBTERM_URL}`,
+      `herdr binary reachable`,
       async () => {
-        const res = await fetch(`${WEBTERM_URL}/api/health`);
-        if (!res.ok) throw new Error(`GET /api/health returned ${res.status}`);
-        const body = await res.json();
-        if (!body.ok) throw new Error(`/api/health responded { ok: false }`);
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn(HERDR_BIN, ["status"], { stdio: ["ignore", "pipe", "pipe"] });
+          child.on("error", reject);
+          child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`herdr status exited ${code}`))));
+        });
       },
-      "start the server with: cd ~/projects/webterm && pnpm dev:server",
+      "install herdr and make sure the server is running: herdr status",
     );
 
-    if (includeUiCheck) {
-      await step(
-        `webterm UI reachable at ${WEBTERM_UI_URL}`,
-        async () => {
-          const res = await fetch(WEBTERM_UI_URL);
-          if (!res.ok) throw new Error(`GET / returned ${res.status}`);
-          const text = await res.text();
-          if (!/<\/?html/i.test(text)) throw new Error("response did not look like HTML");
-        },
-        "start the UI with: cd ~/projects/webterm && pnpm dev:client",
-      );
-    }
-
-    const session = await step(
-      "create webterm session",
-      async () => createSession(),
-      "the API responded but session creation failed — check server logs",
+    await step(
+      `spin up throwaway herdr session ${HERDR_SESSION} (${HERDR_PTY_COLS}x${HERDR_PTY_ROWS} PTY)`,
+      async () => {
+        await startThrowawaySession();
+        sessionStarted = true;
+      },
+      `check com.claudeclaw.herdr-pty isn't already holding this session name, and that ${HERDR_PTY_HOLDER_PATH} exists`,
     );
-    sessionId = session.id;
-    infoLine(`session id = ${session.id}, ${session.cols}x${session.rows}`);
 
-    sse = await step(
-      "subscribe to SSE with promptReady=true",
-      async () => subscribeSse(session.id),
-      "if this 404s, you may be on an older webterm without the prompt-ready event — pull main",
+    const paneId = await step(
+      "resolve session pane id",
+      async () => getPaneId(),
     );
+    infoLine(`pane id = ${paneId}`);
 
     const bootStart = Date.now();
     await step(
       `boot claude in ${CWD}`,
       async () => {
         infoLine(`sending: ${CLAUDE_CMD}`);
-        infoLine(`waiting for boot prompt-ready (timeout ${BOOT_TIMEOUT_MS}ms)`);
-        await sendInput(session.id, CLAUDE_CMD);
-        await waitForPromptReady(sse!, 1, BOOT_TIMEOUT_MS);
+        infoLine(`waiting for status bar to render (timeout ${BOOT_TIMEOUT_MS}ms)`);
+        await sendInput(paneId, CLAUDE_CMD);
+        await waitForBootReady(paneId, BOOT_TIMEOUT_MS);
       },
       `if it times out: claude might be hitting the "trust this folder" dialog (claw-g790). Use a cwd you've opened with \`claude\` at least once.`,
     );
@@ -277,49 +343,17 @@ async function main(): Promise<number> {
     await step(
       `send turn: ${JSON.stringify(HEALTHCHECK_PROMPT)}`,
       async () => {
-        infoLine(`waiting for turn prompt-ready (timeout ${TURN_TIMEOUT_MS}ms)`);
         // Bracketed paste + settle, same as the production handler's turn path.
-        await sendInput(session.id, HEALTHCHECK_PROMPT, { kind: "paste", settleMs: PASTE_SETTLE_MS });
-        await waitForPromptReady(sse!, 2, TURN_TIMEOUT_MS);
+        await sendInput(paneId, HEALTHCHECK_PROMPT, { settleMs: PASTE_SETTLE_MS });
       },
-      "if it times out: claude may be slow or hit a blocking prompt — check the UI (port 5173) to see the live screen",
     );
-    infoLine(`turn completed in ${Date.now() - turnStart}ms`);
 
     const turn = await step(
-      `fetch grid + extract turn (claw-etj7 retry x${ETJ7_MAX_ATTEMPTS})`,
-      async () => {
-        for (let attempt = 1; attempt <= ETJ7_MAX_ATTEMPTS; attempt++) {
-          const grid = await fetchGridText(session.id);
-          infoLine(`attempt ${attempt}: grid = ${grid.length} bytes`);
-          let t = extractTurn(grid, HEALTHCHECK_PROMPT);
-          // Same retry condition as the bot, but stricter on content: the
-          // healthcheck needs the assistant text itself, not just tool notes.
-          if (t !== null && t.assistant.trim().length > 0) {
-            // Mirror the bot's render-settle confirmation: prompt-ready can
-            // fire mid-render (fable thinking pauses), so re-extract until
-            // two consecutive snapshots match before trusting the content.
-            for (let i = 0; i < 20; i++) {
-              await sleep(1_500);
-              const again = extractTurn(await fetchGridText(session.id), HEALTHCHECK_PROMPT);
-              if (!again) break;
-              if (again.assistant === t!.assistant) return again;
-              infoLine(`render still settling (snapshot grew) — re-polling`);
-              t = again;
-            }
-            return t;
-          }
-          if (attempt < ETJ7_MAX_ATTEMPTS) {
-            infoLine(`empty extraction (claw-etj7 premature prompt-ready?) — waiting for next prompt-ready`);
-            await waitForPromptReady(sse!, 2 + attempt, 60_000);
-          }
-        }
-        throw new Error(
-          `extractor returned no assistant text after ${ETJ7_MAX_ATTEMPTS} attempts — ` +
-          `claude never rendered a ⏺ block, or the TUI format drifted (gotcha #8: diff /text against test/fixtures/webterm-grids/)`,
-        );
-      },
+      `poll pane + extract turn (timeout ${TURN_TIMEOUT_MS}ms)`,
+      async () => waitForTurnAndExtract(paneId, HEALTHCHECK_PROMPT, TURN_TIMEOUT_MS),
     );
+    if (!turn) throw new Error("unreachable: waitForTurnAndExtract resolves or throws");
+    infoLine(`turn completed in ${Date.now() - turnStart}ms`);
     infoLine(`assistant: ${JSON.stringify(turn.assistant.slice(0, 120))}${turn.assistant.length > 120 ? "…" : ""}`);
     if (turn.toolNotes.length > 0) infoLine(`toolNotes: ${JSON.stringify(turn.toolNotes)}`);
 
@@ -335,7 +369,7 @@ async function main(): Promise<number> {
         if (!turn.assistant.includes(HEALTHCHECK_EXPECT)) {
           throw new Error(
             `extracted answer ${JSON.stringify(turn.assistant)} does not contain expected marker ` +
-            `${JSON.stringify(HEALTHCHECK_EXPECT)} — claude answered something else than usual`,
+              `${JSON.stringify(HEALTHCHECK_EXPECT)} — claude answered something else than usual`,
           );
         }
       },
@@ -346,16 +380,15 @@ async function main(): Promise<number> {
     exitCode = 1;
     // first failure already logged by step(); we just stop here.
   } finally {
-    if (sessionId !== null) {
+    if (sessionStarted) {
       try {
-        process.stderr.write(`[cleanup] DELETE session ${sessionId} ... `);
-        await killSession(sessionId);
+        process.stderr.write(`[cleanup] stop/delete session ${HERDR_SESSION} ... `);
+        await killThrowawaySession();
         process.stderr.write(`${c.green("✓")}\n`);
       } catch (err) {
         process.stderr.write(`${c.yellow("⚠")} (${err instanceof Error ? err.message : String(err)})\n`);
       }
     }
-    if (sse) sse.abort.abort();
   }
 
   const totalMs = Date.now() - overallStart;
