@@ -32,7 +32,7 @@ const DEFAULT_ASSISTANT_MARKER = "⏺ ";
 // content. Each rule is independent; a line matching ANY rule is dropped.
 const CHROME_RULES: RegExp[] = [
   /^\s*─{4,}\s*$/,                                          // horizontal rules between regions
-  /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+s\s*$/,       // spinner: "✻ Cooked for 3s"
+  /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+s(?:\s*·\s*done\s+\d{1,2}:\d{2}(?:\s*[APap][Mm])?)?\s*$/,       // spinner: "✻ Cooked for 3s"
   /^\s*[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+ing…\s*$/,                         // spinner: "✻ Pondering…" / "· Frolicking…"
   /^\s*(Opus|Fable|Sonnet|Haiku|Mythos)\s+\d/,              // model status row (any model)
   /^\s*[●○]\s+(high|medium|low)\b/,                          // effort indicator
@@ -65,7 +65,7 @@ function isPromptLine(t: string, bareMarker: string): boolean {
   return next === 0x20 || next === 0xa0 || next === 0x09; // space | NBSP | tab
 }
 
-const SPINNER_FOR_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+s$/;
+const SPINNER_FOR_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+(?:ing|ed)\s+for\s+\d+s(?:\s*·\s*done\s+\d{1,2}:\d{2}(?:\s*[APap][Mm])?)?$/;
 const SPINNER_VERB_END_RE = /^[✻✶✳✢✽⠂⠐⠈⠁·]\s+\S+…$/;
 // True if `t` (trimmed) is the first line of the post-answer footer: the
 // spinner ("✻ Cooked for 3s" / "✶ Pouncing…") or claude's "※ recap" block.

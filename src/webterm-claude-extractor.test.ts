@@ -212,6 +212,43 @@ describe("extractTurn — bottom-prompt boundary + model-row chrome (Sonnet-era 
     expect(turn!.assistant).not.toContain("Sonnet");
   });
 
+  // trk-reh: the claude CLI TUI began rendering the post-answer spinner with a
+  // trailing " · done HH:MM AM" suffix (observed v2.1.260/v2.1.261). Both
+  // chrome regexes anchored $ straight after "for \d+s", so the whole line
+  // leaked into the extracted answer and shipped to Slack.
+  it("filters the spinner when it carries a ' · done HH:MM AM' suffix (trk-reh)", () => {
+    const g = [
+      "\u276f what is 2 plus 2? answer in one sentence.",
+      "",
+      "\u23fa 4.",
+      "",
+      "\u273b Cogitated for 1s \u00b7 done 1:46 AM",
+      "\u2500".repeat(60),
+      "   Opus 5 \u2502 24%/200k",
+    ].join("\n");
+    const turn = extractTurn(g, "what is 2 plus 2? answer in one sentence.");
+    expect(turn!.assistant).toBe("4.");
+    expect(turn!.assistant).not.toContain("Cogitated");
+    expect(turn!.assistant).not.toContain("done");
+  });
+
+  it("filters the ' · done' spinner in PM and 24h forms too (trk-reh)", () => {
+    for (const spinner of [
+      "\u273b Cooked for 12s \u00b7 done 11:59 PM",
+      "\u273b Pondered for 3s \u00b7 done 13:07",
+      "\u00b7 Frolicked for 1s \u00b7 done 1:03 pm",
+    ]) {
+      const g = ["\u276f q", "", "\u23fa answer text.", "", spinner].join("\n");
+      const turn = extractTurn(g, "q");
+      expect(turn!.assistant).toBe("answer text.");
+    }
+  });
+
+  it("still filters the legacy suffix-free spinner (trk-reh regression guard)", () => {
+    const g = ["\u276f q", "", "\u23fa answer text.", "", "\u273b Cogitated for 9s"].join("\n");
+    expect(extractTurn(g, "q")!.assistant).toBe("answer text.");
+  });
+
   it("handles a ghost suggestion that wraps onto multiple box lines", () => {
     const g = [
       "❯ summarize the repo",
