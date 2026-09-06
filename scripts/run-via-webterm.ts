@@ -17,9 +17,14 @@
 //    paste, but extractTurn's `❯ `+text match is unreliable across the wrap/
 //    blank-line shape). So completion is detected structurally: a ⏺ response
 //    block is present, NO spinner glyph is active (claude isn't mid-tool/think),
-//    and the grid has been stable for STABLE_POLLS — i.e. claude is idle and
+//    the grid has been stable for STABLE_POLLS, AND the bottom input box is
+//    showing an isolated prompt (isPromptReady) — i.e. claude is idle and
 //    done. This tolerates between-tool pauses (those show a spinner or a
-//    changing grid) without exiting early.
+//    changing grid) without exiting early. The isPromptReady requirement
+//    (trk-7up) exists because a quiet-but-unfinished tool call (e.g. a long
+//    silent Bash step) can otherwise satisfy "no spinner + unchanged grid"
+//    for a couple of polls while the turn is nowhere near done — the footer
+//    is structurally absent until claude actually returns control.
 //  - The answer is captured best-effort (first ⏺ to footer) for logging.
 //  - Sessions are titled "launchd <job>" and adopted if a warm one survives
 //    (--keep-alive); by default the session is killed after the run so they
@@ -133,6 +138,54 @@ function hasResponse(grid: string): boolean {
 // dropping spinner/rule/status chrome. Not echo-anchored, so it works for long
 // prompts; precision isn't critical (this is a log line, the work is the MCP
 // side-effects).
+const RULE_LINE = /^─{4,}$/;
+
+// True only when claude's bottom input box is FULLY rendered as an isolated
+// prompt: a bare "❯" (optionally with a dimmed ghost suggestion) sandwiched
+// between the box's two rule lines, immediately above the model-status row.
+// This is the structural "returned to prompt" signal — mirrors
+// webterm-claude-extractor's findFooterStart/isPromptLine, which is why the
+// extractor treats that whole footer as ABSENT (returns -1) until claude is
+// genuinely idle: webterm-runtime-handler.test.ts's mid-turn fixture
+// (`"⏺ Bash(ls -la)", "✻ Crunched for 1s"`, no footer at all) vs. its
+// completed-turn fixture (rules + bare "❯" + "Opus 4.8 …" row) confirms the
+// footer simply isn't drawn while a turn is in flight.
+//
+// hasResponse()+!hasSpinner()+stable-text alone can't tell a genuinely idle
+// prompt from an in-flight tool call whose "⏺ Tool(args)" line (itself a
+// hasResponse hit) sits quietly for a poll or two with no whitelisted spinner
+// glyph active — that gap is the false-idle regression (claw-3btg.4-class,
+// trk-7up): a long silent step (e.g. yt-dlp subtitle processing) could look
+// "idle" for 8s despite the turn being nowhere near done. Requiring the
+// footer closes it without weakening the existing checks.
+function isPromptReady(grid: string): boolean {
+  const lines = grid.split("\n");
+  let model = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (MODEL_ROW.test(lines[i])) { model = i; break; }
+  }
+  if (model === -1) return false;
+  let i = model - 1;
+  while (i >= 0 && !RULE_LINE.test(lines[i].trim())) i--; // box bottom rule
+  if (i < 0) return false;
+  const boxBottom = i;
+  i--;
+  while (i >= 0 && !RULE_LINE.test(lines[i].trim())) i--; // box top rule
+  if (i < 0) return false;
+  const boxTop = i;
+  for (let j = boxTop + 1; j < boxBottom; j++) {
+    const t = lines[j].trim();
+    if (t === PROMPT_MARKER) return true;
+    if (t.startsWith(PROMPT_MARKER)) {
+      // claude renders a NON-BREAKING SPACE after the marker for a ghost
+      // suggestion, not a regular space (mirrors extractor's isPromptLine).
+      const next = t.charCodeAt(PROMPT_MARKER.length);
+      if (next === 0x20 || next === 0xa0 || next === 0x09) return true;
+    }
+  }
+  return false;
+}
+
 function captureResponse(grid: string): string {
   const lines = grid.split("\n");
   let start = lines.findIndex((l) => l.startsWith(ASSISTANT_MARKER));
@@ -202,18 +255,23 @@ async function runTurn(id: string): Promise<string> {
   await enter(id);
   log("prompt submitted; waiting for completion");
 
-  const STABLE_POLLS = 4;   // ~8s of no change + no spinner = claude idle/done
+  const STABLE_POLLS = 4;   // ~8s of no change + no spinner + at-prompt = claude idle/done
   const POLL_MS = 2000;
+  const HEARTBEAT_MS = 60_000; // diagnostic cadence for hard-timeout debugging (trk-7up)
   const deadline = Date.now() + TIMEOUT_MS;
+  const start = Date.now();
   let prev = "";
   let stable = 0;
   let lastResponse = "";
+  let lastHeartbeat = start;
   while (Date.now() < deadline) {
     await sleep(POLL_MS);
     let g: string;
     try { g = await gridText(id); } catch (e) { throw new Error(`grid fetch failed: ${(e as Error).message}`); }
     const norm = normalize(g);
-    const idle = hasResponse(g) && !hasSpinner(g) && norm === prev;
+    const spinning = hasSpinner(g);
+    const atPrompt = isPromptReady(g);
+    const idle = hasResponse(g) && !spinning && norm === prev && atPrompt;
     prev = norm;
     if (idle) {
       stable++;
@@ -221,6 +279,18 @@ async function runTurn(id: string): Promise<string> {
       if (stable >= STABLE_POLLS) { log(`completed (idle ${STABLE_POLLS}×${POLL_MS}ms)`); return lastResponse || captureResponse(g); }
     } else {
       stable = 0;
+    }
+    // No log evidence exists for WHY a turn hangs past the timeout (trk-7up
+    // investigation found no thermal/memory-pressure/jetsam signal and ruled
+    // out the overnight-cluster theory — morning-brief hit the identical
+    // signature running solo at 07:00). This heartbeat is the diagnostic the
+    // next occurrence needs: spinning=true means claude is still genuinely
+    // working (a real upstream stall, out of this script's control);
+    // spinning=false with atPrompt=false for many consecutive heartbeats
+    // would point at a detection gap instead.
+    if (Date.now() - lastHeartbeat >= HEARTBEAT_MS) {
+      lastHeartbeat = Date.now();
+      log(`still waiting (${Math.round((Date.now() - start) / 1000)}s elapsed): spinning=${spinning} atPrompt=${atPrompt} stable=${stable}`);
     }
   }
   throw new Error(`turn did not complete within ${TIMEOUT_MS}ms`);
